@@ -3,6 +3,13 @@
 @tailwind utilities;
 
 @layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
   :root {
     --color-brand-primary: 15 110 86;
     --color-brand-primary-fg: 255 255 255;
