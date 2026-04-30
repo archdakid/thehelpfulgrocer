@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # SmartShopper
 
 > Mobile-first grocery list and price comparison app for the Caribbean.
@@ -177,3 +178,6 @@ Run `npm install` and restart the Metro bundler. Always use `expo-image`, never 
 ## License
 
 [Decide before launch — recommend MIT for the code, with explicit notice that the SmartShopper trademark and product imagery are reserved.]
+=======
+# thehelpfulgrocer
+>>>>>>> b179678fcc777b8f5d41348230898d1896d3acf8
