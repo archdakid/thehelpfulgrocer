@@ -196,6 +196,40 @@ Format: `## YYYY-MM-DD — Decision title`
 
 ---
 
+## 2026-04-30 — Tailwind CSS v3 (not v4) with NativeWind
+
+**Context:** Setting up NativeWind for the mobile app. `npm install tailwindcss` resolves to v4 by default.
+
+**Decision:** Pin `tailwindcss@^3.4`. Do not upgrade to v4.
+
+**Reasoning:**
+- NativeWind v4 (latest stable) is built against the Tailwind v3 config and PostCSS pipeline. Tailwind v4 changed the config format (CSS-first via `@theme`) and the build flow; NativeWind has not shipped support yet.
+- Installing Tailwind v4 alongside NativeWind v4 produces silent runtime failures (classes don't apply) — worse than a hard error.
+- Trade-off: when NativeWind ships Tailwind v4 support, this is a planned upgrade. Until then, `tailwindcss` is a pinned dependency.
+
+**Trade-offs accepted:**
+- We're on Tailwind v3 longer than the broader web ecosystem.
+- Periodically check NativeWind release notes — when they add v4 support, plan a migration session.
+
+---
+
+## 2026-04-30 — `--legacy-peer-deps` for the mobile workspace install
+
+**Context:** `npm install` for `nativewind`/`zustand`/etc. fails on a peer-dep conflict: `expo-router` pulls `react-dom@19.2.5` (web-only, peerOptional), which demands `react@^19.2.5`, but Expo SDK 54 ships `react@19.1.0`.
+
+**Decision:** Install with `--legacy-peer-deps`. The conflict is on a transitive web dependency we don't ship to mobile.
+
+**Reasoning:**
+- React Native does not consume `react-dom`. The conflict is theoretical for our shipping artifact.
+- Forcing `react@19.2.5` would diverge from the Expo SDK 54 baseline and break native modules.
+- Expected to self-resolve when Expo bumps its React pin, or when expo-router relaxes the peer.
+
+**Trade-offs accepted:**
+- npm prints peer-dep warnings on every install. Acceptable noise.
+- CI must use the same flag.
+
+---
+
 ## Template for future entries
 
 ```markdown
