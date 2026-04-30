@@ -3,9 +3,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function BrowseScreen() {
   return (
-    <SafeAreaView className="flex-1 bg-bg-canvas">
+    <SafeAreaView className="flex-1 bg-canvas">
       <View className="flex-1 items-center justify-center">
-        <Text className="text-h2 text-text-primary">Browse</Text>
+        <Text className="text-h2 text-primary">Browse</Text>
       </View>
     </SafeAreaView>
   );

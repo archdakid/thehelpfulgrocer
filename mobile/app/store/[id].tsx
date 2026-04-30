@@ -6,9 +6,9 @@ export default function StoreDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
 
   return (
-    <SafeAreaView className="flex-1 bg-bg-canvas">
+    <SafeAreaView className="flex-1 bg-canvas">
       <View className="flex-1 items-center justify-center">
-        <Text className="text-h2 text-text-primary">Store {id}</Text>
+        <Text className="text-h2 text-primary">Store {id}</Text>
       </View>
     </SafeAreaView>
   );
