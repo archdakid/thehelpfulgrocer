@@ -4,6 +4,7 @@
 export const queryKeys = {
   stores: () => ['stores'] as const,
   store: (id: string) => ['stores', id] as const,
+  productsAtStore: (storeId: string) => ['stores', storeId, 'products'] as const,
   products: (filters: { search?: string } = {}) => ['products', filters] as const,
   product: (id: string) => ['products', id] as const,
   pricesForProduct: (productId: string) => ['prices', 'product', productId] as const,

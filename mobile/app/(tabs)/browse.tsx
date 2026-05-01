@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { Store as StoreIcon, WifiOff } from 'lucide-react-native';
 import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +18,7 @@ function extractErrorMessage(error: unknown): string {
 }
 
 export default function BrowseScreen() {
+  const router = useRouter();
   const { data, isLoading, isError, error, refetch, isRefetching } = useStores();
 
   if (isError) {
@@ -48,7 +50,14 @@ export default function BrowseScreen() {
         <FlatList
           data={data ?? []}
           keyExtractor={(store: Store) => store.id}
-          renderItem={({ item }) => <ListItem title={item.name} subtitle={item.region} showChevron />}
+          renderItem={({ item }) => (
+            <ListItem
+              title={item.name}
+              subtitle={item.region}
+              showChevron
+              onPress={() => router.push(`/store/${item.id}`)}
+            />
+          )}
           contentContainerClassName={(data ?? []).length === 0 ? 'flex-1' : ''}
           ListEmptyComponent={
             <EmptyState
