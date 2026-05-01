@@ -1,19 +1,23 @@
 import { useRouter } from 'expo-router';
 import { Pencil, Scan, Search, ShoppingBasket } from 'lucide-react-native';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import CompareStoresSheet, { type StoreTotal } from '@/components/list/CompareStoresSheet';
 import ListComposer, { type ListComposerHandle } from '@/components/list/ListComposer';
 import ListItemRow from '@/components/list/ListItemRow';
 import ListSectionHeader from '@/components/list/ListSectionHeader';
-import RunningTotalCard, { type TotalSummary } from '@/components/list/RunningTotalCard';
+import RunningTotalCard, {
+  type SavingsCallout,
+  type TotalSummary,
+} from '@/components/list/RunningTotalCard';
 import StorePicker from '@/components/list/StorePicker';
 import { isCategoryId } from '@/constants/categories';
 import { config } from '@/constants/config';
 import { useListItemPrices } from '@/hooks/useListItemPrices';
+import { useListPricesAllStores } from '@/hooks/useListPricesAllStores';
 import { useStores } from '@/hooks/useStores';
-import { logger } from '@/lib/logger';
 import { useThemedColors } from '@/lib/themedColors';
 import { type ListItem, useListStore } from '@/stores/useListStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -21,6 +25,7 @@ import { useUIStore } from '@/stores/useUIStore';
 export default function HomeScreen() {
   const router = useRouter();
   const composerRef = useRef<ListComposerHandle>(null);
+  const [compareOpen, setCompareOpen] = useState(false);
   const items = useListStore((s) => s.items);
   const addItem = useListStore((s) => s.addItem);
   const addProductItem = useListStore((s) => s.addProductItem);
@@ -29,6 +34,7 @@ export default function HomeScreen() {
   const setQuantity = useListStore((s) => s.setQuantity);
   const clearChecked = useListStore((s) => s.clearChecked);
   const activeStoreId = useUIStore((s) => s.activeStoreId);
+  const setActiveStoreId = useUIStore((s) => s.setActiveStoreId);
   const { data: stores } = useStores();
 
   const linkedProductIds = useMemo(
@@ -36,6 +42,7 @@ export default function HomeScreen() {
     [items],
   );
   const prices = useListItemPrices(linkedProductIds, activeStoreId);
+  const allStorePrices = useListPricesAllStores(linkedProductIds);
 
   const { remaining, checked, total } = useMemo(() => {
     const rem: ListItem[] = [];
@@ -73,6 +80,66 @@ export default function HomeScreen() {
 
     return { remaining: rem, checked: ck, total: summary };
   }, [items, prices.data]);
+
+  // Per-store totals across the entire list (linked items × quantity).
+  // Drives both the savings callout in the running-total card and the
+  // compare-stores sheet.
+  const storeTotals: StoreTotal[] = useMemo(() => {
+    if (!stores || !allStorePrices.data) return [];
+    const linkedItems = items.filter((item) => item.productId !== null);
+    const totalLinked = linkedItems.length;
+    if (totalLinked === 0) return [];
+
+    return stores
+      .map((store) => {
+        let totalMinor = 0;
+        let itemsCovered = 0;
+        let currency: string = config.defaultCurrency;
+        for (const item of linkedItems) {
+          const obs = allStorePrices.data.find(
+            (o) => o.productId === item.productId && o.storeId === store.id,
+          );
+          if (obs) {
+            totalMinor += obs.amountMinorUnits * item.quantity;
+            itemsCovered += 1;
+            currency = obs.currency;
+          }
+        }
+        return {
+          storeId: store.id,
+          storeName: store.name,
+          totalMinor,
+          currency,
+          itemsCovered,
+          missingCount: totalLinked - itemsCovered,
+        };
+      })
+      .filter((t) => t.itemsCovered > 0)
+      .sort((a, b) => a.totalMinor - b.totalMinor);
+  }, [items, stores, allStorePrices.data]);
+
+  const totalLinkedItems = useMemo(
+    () => items.filter((item) => item.productId !== null).length,
+    [items],
+  );
+
+  // Savings callout: only show when the active store isn't already the
+  // cheapest. Hidden in Cheapest mode (where active === cheapest by definition).
+  const savings: SavingsCallout | undefined = useMemo(() => {
+    if (!activeStoreId || storeTotals.length < 2) return undefined;
+    const cheapest = storeTotals[0];
+    const active = storeTotals.find((t) => t.storeId === activeStoreId);
+    if (!cheapest || !active) return undefined;
+    const amountMinor = active.totalMinor - cheapest.totalMinor;
+    if (amountMinor <= 0) return undefined;
+    return {
+      amountMinor,
+      storeName: cheapest.storeName,
+      currency: cheapest.currency,
+    };
+  }, [activeStoreId, storeTotals]);
+
+  const canCompare = storeTotals.length >= 2 && totalLinkedItems > 0;
 
   const storeLabel = activeStoreId
     ? stores?.find((s) => s.id === activeStoreId)?.name ?? 'Selected store'
@@ -130,7 +197,8 @@ export default function HomeScreen() {
         />
       ) : (
         <ScrollView
-          contentContainerStyle={{ paddingBottom: 220 }}
+          className="flex-1"
+          contentContainerStyle={{ paddingBottom: 12 }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -164,10 +232,20 @@ export default function HomeScreen() {
           checkedCount={checked.length}
           total={total}
           storeLabel={storeLabel}
+          {...(savings ? { savings } : {})}
           {...(checked.length > 0 ? { onClearChecked: clearChecked } : {})}
-          onCompareStores={() => logger.info('compare-stores tapped — sheet lands in a future session')}
+          {...(canCompare ? { onCompareStores: () => setCompareOpen(true) } : {})}
         />
       ) : null}
+
+      <CompareStoresSheet
+        visible={compareOpen}
+        onClose={() => setCompareOpen(false)}
+        totals={storeTotals}
+        totalItems={totalLinkedItems}
+        activeStoreId={activeStoreId}
+        onSwitchStore={setActiveStoreId}
+      />
     </SafeAreaView>
   );
 }

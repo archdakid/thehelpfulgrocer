@@ -100,6 +100,7 @@ smartshopper/
 
 | If you're working on... | Read first |
 |---|---|
+| What's done, in progress, and next | `docs/STATUS.md` |
 | Database schema, RLS, migrations | `docs/DATA_MODEL.md` |
 | What features exist and which phase | `docs/FEATURES.md` |
 | Tech stack reasoning, folder structure | `docs/ARCHITECTURE.md` |

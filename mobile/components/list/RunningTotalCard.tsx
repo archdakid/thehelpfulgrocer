@@ -1,6 +1,7 @@
 import { Pressable, Text, View } from 'react-native';
 
 import { formatPrice } from '@/lib/format';
+import { useThemedColors } from '@/lib/themedColors';
 
 export type TotalSummary = {
   remainingMinor: number;
@@ -34,6 +35,7 @@ export default function RunningTotalCard({
   onClearChecked,
   onCompareStores,
 }: RunningTotalCardProps) {
+  const c = useThemedColors();
   const grandMinor = total ? total.remainingMinor + total.checkedMinor : 0;
   const cartPct = total && grandMinor > 0
     ? Math.round((total.checkedMinor / grandMinor) * 100)
@@ -42,9 +44,9 @@ export default function RunningTotalCard({
 
   return (
     <View
-      className="absolute left-3 right-3 bg-surface border-[0.5px] border-border rounded-xl"
+      className="mx-3 bg-surface border-[0.5px] border-border rounded-xl"
       style={{
-        bottom: 12,
+        marginBottom: 8,
         paddingHorizontal: 14,
         paddingTop: 12,
         paddingBottom: 14,
@@ -83,7 +85,7 @@ export default function RunningTotalCard({
           {savings && savings.amountMinor > 0 ? (
             <Text
               className="text-caption font-semibold"
-              style={{ color: 'rgb(var(--color-brand-accent))' }}
+              style={{ color: c.brand.accent }}
               numberOfLines={1}
             >
               Save {formatPrice(savings.amountMinor, savings.currency)} at {savings.storeName}

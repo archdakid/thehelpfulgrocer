@@ -18,7 +18,7 @@ function Pill({ label, active, onPress }: PillProps) {
       accessibilityRole="button"
       accessibilityLabel={`Set active store: ${label}`}
       accessibilityState={{ selected: active }}
-      className={`px-3 py-2 rounded-full border-[0.5px] mr-2 ${
+      className={`shrink-0 px-3 py-2 rounded-full border-[0.5px] mr-2 ${
         active ? 'bg-brand-primary border-brand-primary' : 'bg-surface border-border'
       }`}
     >
@@ -46,7 +46,7 @@ export default function StorePicker() {
         paddingHorizontal: 16,
         paddingVertical: 8,
       }}
-      className="bg-canvas grow-0"
+      className="bg-canvas grow-0 shrink-0"
     >
       <Pill
         label={CHEAPEST_LABEL}

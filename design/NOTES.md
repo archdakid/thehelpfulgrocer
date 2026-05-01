@@ -41,3 +41,12 @@ When something becomes a settled architectural choice, copy it into
 - Tab order: List · Browse · Scan-FAB · Receipts · Settings.
 - The Profile-row-inside-Settings lands when auth ships — until then,
   Settings stays a stub.
+
+## 2026-05-01 — Settings: theme toggle
+
+- Settings should expose a Light / Dark / Auto theme picker. "Auto" means
+  follow the system color scheme (current behavior); the other two override
+  it. Persist in useUIStore alongside activeStoreId.
+- Implementation note: NativeWind v4 exposes `setColorScheme('light' |
+  'dark' | 'system')` to drive its runtime; we apply the preference at app
+  boot and on each toggle change.
