@@ -1,5 +1,4 @@
 import { Pressable, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatPrice } from '@/lib/format';
 
@@ -35,7 +34,6 @@ export default function RunningTotalCard({
   onClearChecked,
   onCompareStores,
 }: RunningTotalCardProps) {
-  const insets = useSafeAreaInsets();
   const grandMinor = total ? total.remainingMinor + total.checkedMinor : 0;
   const cartPct = total && grandMinor > 0
     ? Math.round((total.checkedMinor / grandMinor) * 100)
@@ -46,7 +44,7 @@ export default function RunningTotalCard({
     <View
       className="absolute left-3 right-3 bg-surface border-[0.5px] border-border rounded-xl"
       style={{
-        bottom: Math.max(insets.bottom, 12),
+        bottom: 12,
         paddingHorizontal: 14,
         paddingTop: 12,
         paddingBottom: 14,

@@ -30,3 +30,14 @@ When something becomes a settled architectural choice, copy it into
   compare-sheet hook lands.
 - Stores list moves out of Browse. Browse becomes a Categories grid; users
   switch active store via the pill row on List, not by browsing stores.
+
+## 2026-05-01 — Tab bar IA: keep Settings, fold Profile in
+
+- Diverging from the design canvas: the fifth tab stays **Settings** (not
+  Profile). Profile becomes a row *inside* Settings, alongside Preferences,
+  Notifications, About, etc. Reasoning: Settings is a more flexible
+  top-level slot that absorbs profile, account, and app-config concerns
+  without proliferating tabs later.
+- Tab order: List · Browse · Scan-FAB · Receipts · Settings.
+- The Profile-row-inside-Settings lands when auth ships — until then,
+  Settings stays a stub.
