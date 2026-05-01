@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-01** (end of Session 10 — Compare-stores sheet).
+Last updated: **2026-05-01** (end of Session 11 — Auth scaffold + theme toggle).
 
 ---
 
@@ -28,6 +28,12 @@ Last updated: **2026-05-01** (end of Session 10 — Compare-stores sheet).
 - [x] Category detail screen with cross-store comparison strips
 - [x] Compare-stores bottom sheet with reanimated transitions
 
+### Auth + settings (Session 11)
+- [x] `useAuthStore` (zustand) + `useAuth()` hook backed by Supabase auth events
+- [x] Real `app/auth/sign-in.tsx` and `app/auth/sign-up.tsx` (email/password)
+- [x] Settings rebuilt: Account section (signed-in profile + sign-out, or sign-in / create-account CTAs) + Appearance section (Light / Dark / Auto theme picker)
+- [x] Theme preference persisted in `useUIStore` and applied via NativeWind `colorScheme.set()` at app boot
+
 ### Features (per `docs/FEATURES.md`)
 - [x] **F1 — Grocery list** (local-only, AsyncStorage persistence, swipe-delete, qty stepper, sectioned)
 - [x] **F4 — Price comparison popup** (delivered as both product detail and the compare-stores sheet)
@@ -41,8 +47,8 @@ Last updated: **2026-05-01** (end of Session 10 — Compare-stores sheet).
 These are working code paths but stub behavior — they render, they don't do the full thing yet.
 
 - **Receipts tab** — placeholder screen ("No receipts yet"). F6 is the build-out.
-- **Settings tab** — still the original stub. Will absorb a Profile row when auth ships (per `design/NOTES.md`).
 - **Scan tab** — stub. Real camera flow needs a dev build (per `CLAUDE.md` gotcha).
+- **Auth email confirmation** — sign-up surfaces a "check your email" message; the actual confirmation/redirect flow is whatever Supabase has configured for the project (no deep-link handler in the app yet).
 - **Browse search field** — visual affordance only; tap is a no-op TODO.
 - **Browse "Often Bought" chips** — visual only; tap is a no-op TODO.
 - **Category sort selector** — labeled "Sort: A → Z" but tap is a no-op TODO. Default sort is alphabetical.
@@ -55,12 +61,12 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **Auth (Supabase email/password)** — unblocks user-specific features (saved lists, contributions, admin role check). Profile row inside Settings lands here.
+1. **`profiles` table + admin role** — auth ships the foundation, but the row that hangs `is_admin` and any per-user settings off the user id still needs a migration + RLS. Required before the admin panel and before user-attributed receipts mean anything.
 2. **Open Food Facts integration + nutrition panel** — adds nutrition data to product detail (F7) and lets the catalog grow without admin work. Foundation for camera-mode product matching.
 3. **Receipt scanning (F6)** — Storage + Edge Function + ML Kit OCR + matcher. Big.
 4. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
 5. **Polish round** — global product search, category filter chips (needs subcategory schema), "Often Bought" wired to receipt history, "On list" entrance animation.
-6. **Admin panel (`admin/`)** — separate Next.js app. F8.
+6. **Admin panel (`admin/`)** — separate Next.js app. F8. Blocked on `profiles.is_admin`.
 
 ---
 
@@ -100,7 +106,8 @@ main
                         └── feature/design-pass-tabbar
                             └── feature/design-pass-browse
                                 └── feature/category-detail
-                                    └── feature/compare-stores-sheet  (current)
+                                    └── feature/compare-stores-sheet
+                                        └── feature/auth-scaffold  (current)
 ```
 
 When ready to consolidate: merge each in order into `main`, or squash-merge groups (foundation → design pass → backend → features).
