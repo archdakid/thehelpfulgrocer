@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-01** (end of Session 11 — Auth scaffold + theme toggle).
+Last updated: **2026-05-01** (end of Session 12 — Profiles table + admin role).
 
 ---
 
@@ -34,6 +34,11 @@ Last updated: **2026-05-01** (end of Session 11 — Auth scaffold + theme toggle
 - [x] Settings rebuilt: Account section (signed-in profile + sign-out, or sign-in / create-account CTAs) + Appearance section (Light / Dark / Auto theme picker)
 - [x] Theme preference persisted in `useUIStore` and applied via NativeWind `colorScheme.set()` at app boot
 
+### Profiles + admin role (Session 12)
+- [x] Migration `0005_profiles.sql`: `profiles` table (FK to `auth.users.id`), `handle_new_user` trigger that auto-creates a row at sign-up, RLS (own-row read + update), column-level UPDATE grant on `display_name` only — `is_admin` is SQL-only
+- [x] `useProfile` / `useUpdateProfile` hooks (React Query)
+- [x] Settings: editable display-name field (auto-saves on blur) and an Admin pill next to the email when `is_admin = true`
+
 ### Features (per `docs/FEATURES.md`)
 - [x] **F1 — Grocery list** (local-only, AsyncStorage persistence, swipe-delete, qty stepper, sectioned)
 - [x] **F4 — Price comparison popup** (delivered as both product detail and the compare-stores sheet)
@@ -61,12 +66,12 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **`profiles` table + admin role** — auth ships the foundation, but the row that hangs `is_admin` and any per-user settings off the user id still needs a migration + RLS. Required before the admin panel and before user-attributed receipts mean anything.
-2. **Open Food Facts integration + nutrition panel** — adds nutrition data to product detail (F7) and lets the catalog grow without admin work. Foundation for camera-mode product matching.
-3. **Receipt scanning (F6)** — Storage + Edge Function + ML Kit OCR + matcher. Big.
-4. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
-5. **Polish round** — global product search, category filter chips (needs subcategory schema), "Often Bought" wired to receipt history, "On list" entrance animation.
-6. **Admin panel (`admin/`)** — separate Next.js app. F8. Blocked on `profiles.is_admin`.
+1. **Open Food Facts integration + nutrition panel** — adds nutrition data to product detail (F7) and lets the catalog grow without admin work. Foundation for camera-mode product matching.
+2. **Receipt scanning (F6)** — Storage + Edge Function + ML Kit OCR + matcher. Big.
+3. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
+4. **Polish round** — global product search, category filter chips (needs subcategory schema), "Often Bought" wired to receipt history, "On list" entrance animation.
+5. **Admin panel (`admin/`)** — separate Next.js app. F8. Now unblocked: `profiles.is_admin` is the gate.
+6. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
 
 ---
 
@@ -107,7 +112,8 @@ main
                             └── feature/design-pass-browse
                                 └── feature/category-detail
                                     └── feature/compare-stores-sheet
-                                        └── feature/auth-scaffold  (current)
+                                        └── feature/auth-scaffold
+                                            └── feature/profiles-table  (current)
 ```
 
 When ready to consolidate: merge each in order into `main`, or squash-merge groups (foundation → design pass → backend → features).

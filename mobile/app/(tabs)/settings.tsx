@@ -1,9 +1,12 @@
 import { useRouter } from 'expo-router';
 import { ChevronRight, LogOut, Moon, Sun, SunMoon, User } from 'lucide-react-native';
+import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import Input from '@/components/ui/Input';
 import { useAuth } from '@/hooks/useAuth';
+import { useProfile, useUpdateProfile } from '@/hooks/useProfile';
 import { useThemedColors } from '@/lib/themedColors';
 import { type ThemePreference, useUIStore } from '@/stores/useUIStore';
 
@@ -45,20 +48,7 @@ export default function SettingsScreen() {
             </View>
           ) : isAuthed && user ? (
             <>
-              <View className="flex-row items-center px-4 py-3.5" style={{ gap: 12 }}>
-                <View
-                  className="w-10 h-10 rounded-full items-center justify-center"
-                  style={{ backgroundColor: c.bg.muted }}
-                >
-                  <User size={20} color={c.text.secondary} />
-                </View>
-                <View className="flex-1" style={{ minWidth: 0 }}>
-                  <Text className="text-body-sm text-secondary">Signed in</Text>
-                  <Text className="text-body text-primary font-semibold" numberOfLines={1}>
-                    {user.email ?? 'Account'}
-                  </Text>
-                </View>
-              </View>
+              <AuthedAccount email={user.email ?? null} />
               <Divider />
               <Pressable
                 onPress={onSignOut}
@@ -128,6 +118,92 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function AuthedAccount({ email }: { email: string | null }) {
+  const c = useThemedColors();
+  const { data: profile, isLoading } = useProfile();
+  const updateProfile = useUpdateProfile();
+
+  const [draft, setDraft] = useState('');
+  const [hydrated, setHydrated] = useState(false);
+
+  // Seed the draft from the first profile load. We don't keep it in sync with
+  // later remote changes because the only writer is this same screen — and
+  // resetting mid-edit would clobber user input.
+  useEffect(() => {
+    if (profile && !hydrated) {
+      setDraft(profile.displayName ?? '');
+      setHydrated(true);
+    }
+  }, [profile, hydrated]);
+
+  const save = () => {
+    if (!profile) return;
+    const next = draft.trim().length === 0 ? null : draft.trim();
+    if (next !== profile.displayName) {
+      updateProfile.mutate({ displayName: next });
+    }
+  };
+
+  return (
+    <>
+      <View className="flex-row items-center px-4 py-3.5" style={{ gap: 12 }}>
+        <View
+          className="w-10 h-10 rounded-full items-center justify-center"
+          style={{ backgroundColor: c.bg.muted }}
+        >
+          <User size={20} color={c.text.secondary} />
+        </View>
+        <View className="flex-1" style={{ minWidth: 0 }}>
+          <View className="flex-row items-center" style={{ gap: 6 }}>
+            <Text className="text-body-sm text-secondary">Signed in</Text>
+            {profile?.isAdmin ? (
+              <View
+                className="rounded-full px-1.5"
+                style={{ backgroundColor: c.brand.accent, paddingVertical: 1 }}
+              >
+                <Text
+                  className="text-[10px] uppercase font-bold text-inverse"
+                  style={{ letterSpacing: 0.5 }}
+                >
+                  Admin
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          <Text className="text-body text-primary font-semibold" numberOfLines={1}>
+            {email ?? 'Account'}
+          </Text>
+        </View>
+      </View>
+      <Divider />
+      <View className="px-4 py-3.5">
+        <View className="flex-row items-baseline justify-between mb-1.5">
+          <Text className="text-caption text-secondary">Display name</Text>
+          {updateProfile.isPending ? (
+            <Text className="text-caption text-tertiary">Saving…</Text>
+          ) : updateProfile.isError ? (
+            <Text className="text-caption text-danger">Save failed</Text>
+          ) : null}
+        </View>
+        {isLoading && !profile ? (
+          <Text className="text-body-sm text-tertiary py-3">Loading…</Text>
+        ) : (
+          <Input
+            accessibilityLabel="Display name"
+            value={draft}
+            onChangeText={setDraft}
+            onEndEditing={save}
+            blurOnSubmit
+            returnKeyType="done"
+            placeholder="Add a display name"
+            maxLength={48}
+          />
+        )}
+      </View>
+    </>
   );
 }
 
