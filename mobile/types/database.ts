@@ -12,6 +12,31 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       prices: {
@@ -59,30 +84,6 @@ export type Database = {
           },
         ]
       }
-      profiles: {
-        Row: {
-          created_at: string
-          display_name: string | null
-          id: string
-          is_admin: boolean
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          display_name?: string | null
-          id: string
-          is_admin?: boolean
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          display_name?: string | null
-          id?: string
-          is_admin?: boolean
-          updated_at?: string
-        }
-        Relationships: []
-      }
       products: {
         Row: {
           brand: string | null
@@ -110,6 +111,30 @@ export type Database = {
           image_url?: string | null
           name?: string
           upc?: string | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          is_admin: boolean
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id: string
+          is_admin?: boolean
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          is_admin?: boolean
+          updated_at?: string
         }
         Relationships: []
       }
@@ -297,6 +322,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },
