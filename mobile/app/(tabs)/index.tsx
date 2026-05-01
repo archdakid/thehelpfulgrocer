@@ -6,10 +6,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import ListComposer from '@/components/list/ListComposer';
 import ListItemRow from '@/components/list/ListItemRow';
-import RunningTotalBar from '@/components/list/RunningTotalBar';
+import RunningTotalBar, { type TotalSummary } from '@/components/list/RunningTotalBar';
+import StorePicker from '@/components/list/StorePicker';
 import EmptyState from '@/components/ui/EmptyState';
-import { useCheapestPricesForProducts } from '@/hooks/useCheapestPricesForProducts';
+import { useListItemPrices } from '@/hooks/useListItemPrices';
+import { useStores } from '@/hooks/useStores';
+import { config } from '@/constants/config';
 import { type ListItem, useListStore } from '@/stores/useListStore';
+import { useUIStore } from '@/stores/useUIStore';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -20,32 +24,63 @@ export default function HomeScreen() {
   const toggleChecked = useListStore((s) => s.toggleChecked);
   const setQuantity = useListStore((s) => s.setQuantity);
   const clearChecked = useListStore((s) => s.clearChecked);
+  const activeStoreId = useUIStore((s) => s.activeStoreId);
+  const { data: stores } = useStores();
 
   const linkedProductIds = useMemo(
     () => items.flatMap((item) => (item.productId ? [item.productId] : [])),
     [items],
   );
-  const cheapestPrices = useCheapestPricesForProducts(linkedProductIds);
+  const prices = useListItemPrices(linkedProductIds, activeStoreId);
 
-  const { remainingCount, checkedCount } = useMemo(() => {
+  const { remainingCount, checkedCount, total } = useMemo(() => {
     let remaining = 0;
     let checked = 0;
+    let remainingMinor = 0;
+    let checkedMinor = 0;
+    let unpricedRemaining = 0;
+    let currency: string | null = null;
+
     for (const item of items) {
+      const price = item.productId ? prices.data?.get(item.productId) : undefined;
       if (item.checked) {
         checked += 1;
+        if (price) checkedMinor += price.amountMinorUnits * item.quantity;
       } else {
         remaining += 1;
+        if (price) {
+          remainingMinor += price.amountMinorUnits * item.quantity;
+          currency = currency ?? price.currency;
+        } else {
+          unpricedRemaining += 1;
+        }
       }
     }
-    return { remainingCount: remaining, checkedCount: checked };
-  }, [items]);
+
+    const summary: TotalSummary | undefined = prices.data && (remainingMinor > 0 || checkedMinor > 0)
+      ? {
+          remainingMinor,
+          checkedMinor,
+          currency: currency ?? config.defaultCurrency,
+          unpricedRemaining,
+        }
+      : undefined;
+
+    return { remainingCount: remaining, checkedCount: checked, total: summary };
+  }, [items, prices.data]);
+
+  const priceMode = activeStoreId ? 'at-store' : 'cheapest';
+  const storeLabel = activeStoreId
+    ? stores?.find((s) => s.id === activeStoreId)?.name ?? 'Selected store'
+    : 'Cheapest across all stores';
 
   function renderItem({ item }: { item: ListItem }) {
-    const cheapest = item.productId ? cheapestPrices.data?.get(item.productId) : undefined;
+    const price = item.productId ? prices.data?.get(item.productId) : undefined;
     return (
       <ListItemRow
         item={item}
-        cheapestPrice={cheapest}
+        price={price}
+        priceMode={priceMode}
         onToggle={() => toggleChecked(item.id)}
         onDelete={() => removeItem(item.id)}
         onIncrement={() => setQuantity(item.id, item.quantity + 1)}
@@ -57,9 +92,10 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView edges={['top']} className="flex-1 bg-canvas">
-      <View className="px-4 pt-2 pb-3">
+      <View className="px-4 pt-2 pb-1">
         <Text className="text-h1 text-primary">Your list</Text>
       </View>
+      <StorePicker />
       <ListComposer onAddCustom={addItem} onAddProduct={addProductItem} />
       <FlatList
         data={items}
@@ -79,6 +115,8 @@ export default function HomeScreen() {
       <RunningTotalBar
         remainingCount={remainingCount}
         checkedCount={checkedCount}
+        total={total}
+        storeLabel={storeLabel}
         onClearChecked={clearChecked}
       />
     </SafeAreaView>

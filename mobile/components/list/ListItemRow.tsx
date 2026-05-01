@@ -5,18 +5,34 @@ import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeabl
 
 import Checkbox from '@/components/ui/Checkbox';
 import { formatPrice } from '@/lib/format';
-import type { CheapestPrice } from '@/hooks/useCheapestPricesForProducts';
+import type { ListItemPrice } from '@/hooks/useListItemPrices';
 import type { ListItem } from '@/stores/useListStore';
+
+type PriceMode = 'cheapest' | 'at-store';
 
 type ListItemRowProps = {
   item: ListItem;
-  cheapestPrice?: CheapestPrice | undefined;
+  price?: ListItemPrice | undefined;
+  priceMode: PriceMode;
   onToggle: () => void;
   onDelete: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
   onOpenProduct?: (() => void) | undefined;
 };
+
+function buildPriceLabel(
+  linked: boolean,
+  price: ListItemPrice | undefined,
+  mode: PriceMode,
+): string | null {
+  if (!linked) return null;
+  if (price) {
+    const formatted = formatPrice(price.amountMinorUnits, price.currency);
+    return mode === 'cheapest' ? `from ${formatted}` : formatted;
+  }
+  return mode === 'at-store' ? 'Not at this store' : 'No price yet';
+}
 
 function DeleteAction({ onDelete }: { onDelete: () => void }) {
   return (
@@ -34,7 +50,8 @@ function DeleteAction({ onDelete }: { onDelete: () => void }) {
 
 export default function ListItemRow({
   item,
-  cheapestPrice,
+  price,
+  priceMode,
   onToggle,
   onDelete,
   onIncrement,
@@ -43,11 +60,7 @@ export default function ListItemRow({
 }: ListItemRowProps) {
   const linked = item.productId !== null;
   const canOpen = linked && !!onOpenProduct;
-  const priceLabel = cheapestPrice
-    ? `from ${formatPrice(cheapestPrice.amountMinorUnits, cheapestPrice.currency)}`
-    : linked
-      ? 'No price yet'
-      : null;
+  const priceLabel = buildPriceLabel(linked, price, priceMode);
 
   // Gesture-handler tap that fails on movement past its threshold, so a swipe
   // on the row never resolves as a tap on release.

@@ -9,6 +9,6 @@ export const queryKeys = {
   product: (id: string) => ['products', id] as const,
   searchProducts: (query: string) => ['products', 'search', query] as const,
   pricesForProduct: (productId: string) => ['prices', 'product', productId] as const,
-  cheapestPricesForProducts: (productIds: readonly string[]) =>
-    ['prices', 'cheapest', [...productIds].sort()] as const,
+  listItemPrices: (productIds: readonly string[], storeId: string | null) =>
+    ['prices', 'list-items', storeId ?? 'cheapest', [...productIds].sort()] as const,
 } as const;
