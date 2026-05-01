@@ -4,8 +4,10 @@ import { ArrowLeft, ImageOff, WifiOff } from 'lucide-react-native';
 import { ActivityIndicator, FlatList, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import NutritionPanel from '@/components/product/NutritionPanel';
 import PriceComparisonRow from '@/components/product/PriceComparisonRow';
 import EmptyState from '@/components/ui/EmptyState';
+import { useOpenFoodFacts } from '@/hooks/useOpenFoodFacts';
 import { useProduct } from '@/hooks/useProduct';
 import { usePricesForProduct } from '@/hooks/usePricesForProduct';
 import { logger } from '@/lib/logger';
@@ -26,9 +28,15 @@ export default function ProductDetailScreen() {
   const c = useThemedColors();
   const productQuery = useProduct(id);
   const pricesQuery = usePricesForProduct(id);
+  const offQuery = useOpenFoodFacts(productQuery.data?.upc ?? null);
 
   if (productQuery.isError) logger.error('useProduct failed', { id, error: productQuery.error });
   if (pricesQuery.isError) logger.error('usePricesForProduct failed', { id, error: pricesQuery.error });
+  // OFF errors are non-fatal — the product page works without nutrition.
+  // Log so we notice systemic failures, but don't surface to the user.
+  if (offQuery.isError) {
+    logger.warn('useOpenFoodFacts failed', { upc: productQuery.data?.upc, error: offQuery.error });
+  }
 
   const isLoading = productQuery.isLoading || pricesQuery.isLoading;
   const isError = productQuery.isError || pricesQuery.isError;
@@ -100,6 +108,13 @@ export default function ProductDetailScreen() {
                     : 'Cheapest first. Prices observed by the SmartShopper team.'}
                 </Text>
               </View>
+            }
+            ListFooterComponent={
+              offQuery.data?.nutrition ? (
+                <View className="px-4 pt-4 pb-6">
+                  <NutritionPanel nutrition={offQuery.data.nutrition} />
+                </View>
+              ) : null
             }
             contentContainerClassName={(pricesQuery.data ?? []).length === 0 ? 'flex-grow' : ''}
             showsVerticalScrollIndicator={false}

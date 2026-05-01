@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-01** (end of Session 12 — Profiles table + admin role).
+Last updated: **2026-05-01** (end of Session 13 — Open Food Facts nutrition panel).
 
 ---
 
@@ -39,6 +39,11 @@ Last updated: **2026-05-01** (end of Session 12 — Profiles table + admin role)
 - [x] `useProfile` / `useUpdateProfile` hooks (React Query)
 - [x] Settings: editable display-name field (auto-saves on blur) and an Admin pill next to the email when `is_admin = true`
 
+### Open Food Facts (Session 13)
+- [x] `lib/openFoodFacts.ts` typed client (anonymous v2 reads, normalized OFFProduct shape, 404 → null, `INTERNAL-` UPCs skipped)
+- [x] `useOpenFoodFacts(upc)` hook with 24h staleTime / 7d gcTime, disabled when no real barcode
+- [x] `NutritionPanel` rendered as the FlatList footer on `/product/[id]`, hidden when OFF returns no nutriments — non-fatal errors are logged, not surfaced
+
 ### Features (per `docs/FEATURES.md`)
 - [x] **F1 — Grocery list** (local-only, AsyncStorage persistence, swipe-delete, qty stepper, sectioned)
 - [x] **F4 — Price comparison popup** (delivered as both product detail and the compare-stores sheet)
@@ -66,7 +71,7 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **Open Food Facts integration + nutrition panel** — adds nutrition data to product detail (F7) and lets the catalog grow without admin work. Foundation for camera-mode product matching.
+1. **OFF image fallback chain** — when our `products.image_url` is null but OFF has one, render the OFF image. Per `DECISIONS.md` priority: OFF → admin-approved → admin-uploaded → placeholder. Tightly scoped follow-up to Session 13.
 2. **Receipt scanning (F6)** — Storage + Edge Function + ML Kit OCR + matcher. Big.
 3. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
 4. **Polish round** — global product search, category filter chips (needs subcategory schema), "Often Bought" wired to receipt history, "On list" entrance animation.
@@ -113,7 +118,8 @@ main
                                 └── feature/category-detail
                                     └── feature/compare-stores-sheet
                                         └── feature/auth-scaffold
-                                            └── feature/profiles-table  (current)
+                                            └── feature/profiles-table
+                                                └── feature/openfoodfacts  (current)
 ```
 
 When ready to consolidate: merge each in order into `main`, or squash-merge groups (foundation → design pass → backend → features).
