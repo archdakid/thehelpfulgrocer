@@ -11,6 +11,7 @@ import { useOpenFoodFacts } from '@/hooks/useOpenFoodFacts';
 import { useProduct } from '@/hooks/useProduct';
 import { usePricesForProduct } from '@/hooks/usePricesForProduct';
 import { logger } from '@/lib/logger';
+import { resolveProductImage } from '@/lib/productImage';
 import { useThemedColors } from '@/lib/themedColors';
 
 function extractErrorMessage(error: unknown): string {
@@ -43,6 +44,16 @@ export default function ProductDetailScreen() {
   const error = productQuery.error ?? pricesQuery.error;
 
   const cheapestId = pricesQuery.data?.[0]?.store.id;
+
+  const resolvedImageUrl = resolveProductImage({
+    offImageUrl: offQuery.data?.imageUrl ?? null,
+    ownImageUrl: productQuery.data?.image_url ?? null,
+  });
+  // Hold the no-image placeholder until OFF settles so we don't flicker
+  // ImageOff → real image for products OFF eventually returns. When the OFF
+  // hook is disabled (no UPC, or INTERNAL- prefix), isLoading is false from
+  // mount and the placeholder shows immediately, which is what we want.
+  const showImagePlaceholder = resolvedImageUrl === null && !offQuery.isLoading;
 
   return (
     <>
@@ -85,15 +96,15 @@ export default function ProductDetailScreen() {
             ListHeaderComponent={
               <View className="px-4 pb-4">
                 <View className="w-full aspect-square bg-muted rounded-lg items-center justify-center overflow-hidden mb-4">
-                  {productQuery.data.image_url ? (
+                  {resolvedImageUrl ? (
                     <Image
-                      source={{ uri: productQuery.data.image_url }}
+                      source={{ uri: resolvedImageUrl }}
                       style={{ width: '100%', height: '100%' }}
                       contentFit="contain"
                     />
-                  ) : (
+                  ) : showImagePlaceholder ? (
                     <ImageOff size={48} color={c.text.tertiary} strokeWidth={1.5} />
-                  )}
+                  ) : null}
                 </View>
                 <Text className="text-h2 text-primary">{productQuery.data.name}</Text>
                 {productQuery.data.brand ? (

@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-01** (end of Session 13 — Open Food Facts nutrition panel).
+Last updated: **2026-05-01** (end of Session 14 — OFF image fallback chain).
 
 ---
 
@@ -44,6 +44,10 @@ Last updated: **2026-05-01** (end of Session 13 — Open Food Facts nutrition pa
 - [x] `useOpenFoodFacts(upc)` hook with 24h staleTime / 7d gcTime, disabled when no real barcode
 - [x] `NutritionPanel` rendered as the FlatList footer on `/product/[id]`, hidden when OFF returns no nutriments — non-fatal errors are logged, not surfaced
 
+### OFF image fallback (Session 14)
+- [x] `lib/productImage.ts` `resolveProductImage()` — implements the priority order from `DECISIONS.md`: OFF → our `image_url` → null
+- [x] Product detail uses the resolver and holds the `ImageOff` placeholder until OFF settles, eliminating the placeholder→image flicker for products OFF eventually returns
+
 ### Features (per `docs/FEATURES.md`)
 - [x] **F1 — Grocery list** (local-only, AsyncStorage persistence, swipe-delete, qty stepper, sectioned)
 - [x] **F4 — Price comparison popup** (delivered as both product detail and the compare-stores sheet)
@@ -71,12 +75,11 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **OFF image fallback chain** — when our `products.image_url` is null but OFF has one, render the OFF image. Per `DECISIONS.md` priority: OFF → admin-approved → admin-uploaded → placeholder. Tightly scoped follow-up to Session 13.
+1. **Polish round** — global product search, category filter chips (needs subcategory schema), "Often Bought" wired to receipt history, "On list" entrance animation, no-op TODOs in Browse (search field, sort selector).
 2. **Receipt scanning (F6)** — Storage + Edge Function + ML Kit OCR + matcher. Big.
 3. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
-4. **Polish round** — global product search, category filter chips (needs subcategory schema), "Often Bought" wired to receipt history, "On list" entrance animation.
-5. **Admin panel (`admin/`)** — separate Next.js app. F8. Now unblocked: `profiles.is_admin` is the gate.
-6. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
+4. **Admin panel (`admin/`)** — separate Next.js app. F8. Now unblocked: `profiles.is_admin` is the gate.
+5. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
 
 ---
 
@@ -119,7 +122,8 @@ main
                                     └── feature/compare-stores-sheet
                                         └── feature/auth-scaffold
                                             └── feature/profiles-table
-                                                └── feature/openfoodfacts  (current)
+                                                └── feature/openfoodfacts
+                                                    └── feature/off-image-fallback  (current)
 ```
 
 When ready to consolidate: merge each in order into `main`, or squash-merge groups (foundation → design pass → backend → features).
