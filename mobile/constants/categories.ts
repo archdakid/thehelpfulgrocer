@@ -33,3 +33,26 @@ export function isCategoryId(value: unknown): value is CategoryId {
 
 // Fallback when a product has no category set or an unrecognized value.
 export const DEFAULT_CATEGORY: CategoryId = 'pantry';
+
+export const categoryNames: Record<CategoryId, string> = {
+  produce:  'Produce',
+  dairy:    'Dairy & eggs',
+  meat:     'Meat & fish',
+  bakery:   'Bakery',
+  pantry:   'Pantry',
+  frozen:   'Frozen',
+  beverage: 'Beverages',
+  snacks:   'Snacks',
+};
+
+// Display order for the Browse tab grid. Matches design/browse-grid.jsx.
+export const CATEGORY_DISPLAY_ORDER: readonly CategoryId[] = [
+  'produce',
+  'dairy',
+  'meat',
+  'bakery',
+  'pantry',
+  'frozen',
+  'beverage',
+  'snacks',
+];
