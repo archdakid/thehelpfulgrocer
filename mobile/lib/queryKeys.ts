@@ -7,5 +7,8 @@ export const queryKeys = {
   productsAtStore: (storeId: string) => ['stores', storeId, 'products'] as const,
   products: (filters: { search?: string } = {}) => ['products', filters] as const,
   product: (id: string) => ['products', id] as const,
+  searchProducts: (query: string) => ['products', 'search', query] as const,
   pricesForProduct: (productId: string) => ['prices', 'product', productId] as const,
+  cheapestPricesForProducts: (productIds: readonly string[]) =>
+    ['prices', 'cheapest', [...productIds].sort()] as const,
 } as const;

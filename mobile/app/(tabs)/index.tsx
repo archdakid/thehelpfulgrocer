@@ -1,21 +1,31 @@
+import { useRouter } from 'expo-router';
 import { ShoppingBasket } from 'lucide-react-native';
 import { useMemo } from 'react';
 import { FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import AddItemRow from '@/components/list/AddItemRow';
+import ListComposer from '@/components/list/ListComposer';
 import ListItemRow from '@/components/list/ListItemRow';
 import RunningTotalBar from '@/components/list/RunningTotalBar';
 import EmptyState from '@/components/ui/EmptyState';
+import { useCheapestPricesForProducts } from '@/hooks/useCheapestPricesForProducts';
 import { type ListItem, useListStore } from '@/stores/useListStore';
 
 export default function HomeScreen() {
+  const router = useRouter();
   const items = useListStore((s) => s.items);
   const addItem = useListStore((s) => s.addItem);
+  const addProductItem = useListStore((s) => s.addProductItem);
   const removeItem = useListStore((s) => s.removeItem);
   const toggleChecked = useListStore((s) => s.toggleChecked);
   const setQuantity = useListStore((s) => s.setQuantity);
   const clearChecked = useListStore((s) => s.clearChecked);
+
+  const linkedProductIds = useMemo(
+    () => items.flatMap((item) => (item.productId ? [item.productId] : [])),
+    [items],
+  );
+  const cheapestPrices = useCheapestPricesForProducts(linkedProductIds);
 
   const { remainingCount, checkedCount } = useMemo(() => {
     let remaining = 0;
@@ -31,13 +41,16 @@ export default function HomeScreen() {
   }, [items]);
 
   function renderItem({ item }: { item: ListItem }) {
+    const cheapest = item.productId ? cheapestPrices.data?.get(item.productId) : undefined;
     return (
       <ListItemRow
         item={item}
+        cheapestPrice={cheapest}
         onToggle={() => toggleChecked(item.id)}
         onDelete={() => removeItem(item.id)}
         onIncrement={() => setQuantity(item.id, item.quantity + 1)}
         onDecrement={() => setQuantity(item.id, item.quantity - 1)}
+        onOpenProduct={item.productId ? () => router.push(`/product/${item.productId}`) : undefined}
       />
     );
   }
@@ -47,7 +60,7 @@ export default function HomeScreen() {
       <View className="px-4 pt-2 pb-3">
         <Text className="text-h1 text-primary">Your list</Text>
       </View>
-      <AddItemRow onAdd={addItem} />
+      <ListComposer onAddCustom={addItem} onAddProduct={addProductItem} />
       <FlatList
         data={items}
         keyExtractor={(item) => item.id}
@@ -57,7 +70,7 @@ export default function HomeScreen() {
           <EmptyState
             icon={ShoppingBasket}
             heading="Your list is empty"
-            body="Add an item above to get started."
+            body="Search for a product or type any text and tap +."
           />
         }
         keyboardShouldPersistTaps="handled"
