@@ -9,6 +9,7 @@ import { useProductsAtStore } from '@/hooks/useProductsAtStore';
 import { useStore } from '@/hooks/useStore';
 import { formatPrice } from '@/lib/format';
 import { logger } from '@/lib/logger';
+import { useThemedColors } from '@/lib/themedColors';
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -22,6 +23,7 @@ function extractErrorMessage(error: unknown): string {
 export default function StoreDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const c = useThemedColors();
   const storeQuery = useStore(id);
   const productsQuery = useProductsAtStore(id);
 
@@ -44,7 +46,7 @@ export default function StoreDetailScreen() {
             accessibilityLabel="Go back"
             className="w-11 h-11 items-center justify-center"
           >
-            <ArrowLeft size={24} color="rgb(26 26 24)" />
+            <ArrowLeft size={24} color={c.text.primary} />
           </Pressable>
         </View>
 

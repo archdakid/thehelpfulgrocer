@@ -1,0 +1,72 @@
+/* SmartShopper design tokens — light mode */
+:root {
+  /* brand */
+  --brand-primary: #0F6E56;
+  --brand-primary-fg: #FFFFFF;
+  --brand-accent: #EF9F27;
+
+  /* surfaces */
+  --bg-canvas: #FAFAF7;
+  --bg-surface: #FFFFFF;
+  --bg-muted: #F1EFE8;
+  --bg-scrim: rgba(0,0,0,0.5);
+
+  /* text */
+  --text-primary: #1A1A18;
+  --text-secondary: #5F5E5A;
+  --text-tertiary: #888780;
+  --text-inverse: #FFFFFF;
+
+  /* semantic */
+  --success: #0F6E56;
+  --warning: #BA7517;
+  --danger: #A32D2D;
+  --info: #185FA5;
+
+  /* borders */
+  --border-default: rgba(0,0,0,0.08);
+  --border-strong: rgba(0,0,0,0.16);
+
+  /* radii */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+
+  /* type */
+  --font-sans: -apple-system, "SF Pro Text", "SF Pro", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+
+.ss-root {
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+  height: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* type scale */
+.t-display { font-size: 32px; line-height: 38px; font-weight: 600; letter-spacing: -0.5px; }
+.t-h1 { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.3px; }
+.t-h2 { font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.2px; }
+.t-h3 { font-size: 17px; line-height: 22px; font-weight: 600; letter-spacing: -0.2px; }
+.t-body { font-size: 16px; line-height: 22px; font-weight: 400; }
+.t-body-sm { font-size: 14px; line-height: 20px; font-weight: 400; }
+.t-caption { font-size: 12px; line-height: 16px; font-weight: 400; }
+.t-mono { font-size: 14px; line-height: 20px; font-weight: 500;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.t-mono-lg { font-size: 17px; line-height: 22px; font-weight: 600;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.t-mono-display { font-size: 28px; line-height: 32px; font-weight: 600;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+
+.text-secondary { color: var(--text-secondary); }
+.text-tertiary { color: var(--text-tertiary); }
+
+/* hide native scrollbars inside frame */
+.ss-scroll::-webkit-scrollbar { display: none; }
+.ss-scroll { scrollbar-width: none; }

@@ -1,22 +1,26 @@
 import { useRouter } from 'expo-router';
-import { ShoppingBasket } from 'lucide-react-native';
-import { useMemo } from 'react';
-import { FlatList, Text, View } from 'react-native';
+import { Pencil, Scan, Search, ShoppingBasket } from 'lucide-react-native';
+import { useMemo, useRef } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import ListComposer from '@/components/list/ListComposer';
+import ListComposer, { type ListComposerHandle } from '@/components/list/ListComposer';
 import ListItemRow from '@/components/list/ListItemRow';
-import RunningTotalBar, { type TotalSummary } from '@/components/list/RunningTotalBar';
+import ListSectionHeader from '@/components/list/ListSectionHeader';
+import RunningTotalCard, { type TotalSummary } from '@/components/list/RunningTotalCard';
 import StorePicker from '@/components/list/StorePicker';
-import EmptyState from '@/components/ui/EmptyState';
+import { isCategoryId } from '@/constants/categories';
+import { config } from '@/constants/config';
 import { useListItemPrices } from '@/hooks/useListItemPrices';
 import { useStores } from '@/hooks/useStores';
-import { config } from '@/constants/config';
+import { logger } from '@/lib/logger';
+import { useThemedColors } from '@/lib/themedColors';
 import { type ListItem, useListStore } from '@/stores/useListStore';
 import { useUIStore } from '@/stores/useUIStore';
 
 export default function HomeScreen() {
   const router = useRouter();
+  const composerRef = useRef<ListComposerHandle>(null);
   const items = useListStore((s) => s.items);
   const addItem = useListStore((s) => s.addItem);
   const addProductItem = useListStore((s) => s.addProductItem);
@@ -33,24 +37,25 @@ export default function HomeScreen() {
   );
   const prices = useListItemPrices(linkedProductIds, activeStoreId);
 
-  const { remainingCount, checkedCount, total } = useMemo(() => {
-    let remaining = 0;
-    let checked = 0;
+  const { remaining, checked, total } = useMemo(() => {
+    const rem: ListItem[] = [];
+    const ck: ListItem[] = [];
     let remainingMinor = 0;
     let checkedMinor = 0;
     let unpricedRemaining = 0;
     let currency: string | null = null;
 
     for (const item of items) {
-      const price = item.productId ? prices.data?.get(item.productId) : undefined;
+      const info = item.productId ? prices.data?.get(item.productId) : undefined;
+      const current = info?.current;
       if (item.checked) {
-        checked += 1;
-        if (price) checkedMinor += price.amountMinorUnits * item.quantity;
+        ck.push(item);
+        if (current) checkedMinor += current.amountMinorUnits * item.quantity;
       } else {
-        remaining += 1;
-        if (price) {
-          remainingMinor += price.amountMinorUnits * item.quantity;
-          currency = currency ?? price.currency;
+        rem.push(item);
+        if (current) {
+          remainingMinor += current.amountMinorUnits * item.quantity;
+          currency = currency ?? current.currency;
         } else {
           unpricedRemaining += 1;
         }
@@ -66,21 +71,36 @@ export default function HomeScreen() {
         }
       : undefined;
 
-    return { remainingCount: remaining, checkedCount: checked, total: summary };
+    return { remaining: rem, checked: ck, total: summary };
   }, [items, prices.data]);
 
-  const priceMode = activeStoreId ? 'at-store' : 'cheapest';
   const storeLabel = activeStoreId
     ? stores?.find((s) => s.id === activeStoreId)?.name ?? 'Selected store'
-    : 'Cheapest across all stores';
+    : 'Cheapest';
 
-  function renderItem({ item }: { item: ListItem }) {
-    const price = item.productId ? prices.data?.get(item.productId) : undefined;
+  const isEmpty = items.length === 0;
+
+  function handleAddProduct(product: {
+    id: string;
+    name: string;
+    brand: string | null;
+    category: string | null;
+  }) {
+    addProductItem({
+      id: product.id,
+      name: product.name,
+      brand: product.brand,
+      category: isCategoryId(product.category) ? product.category : null,
+    });
+  }
+
+  function renderRow(item: ListItem) {
+    const info = item.productId ? prices.data?.get(item.productId) : undefined;
     return (
       <ListItemRow
+        key={item.id}
         item={item}
-        price={price}
-        priceMode={priceMode}
+        priceInfo={info}
         onToggle={() => toggleChecked(item.id)}
         onDelete={() => removeItem(item.id)}
         onIncrement={() => setQuantity(item.id, item.quantity + 1)}
@@ -92,33 +112,115 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView edges={['top']} className="flex-1 bg-canvas">
-      <View className="px-4 pt-2 pb-1">
-        <Text className="text-h1 text-primary">Your list</Text>
+      {/* Header */}
+      <View className="flex-row items-end justify-between px-4 pt-1 pb-2">
+        <View>
+          <Text className="text-eyebrow uppercase text-tertiary">Shopping at</Text>
+          <Text className="text-h1 text-primary mt-0.5">Your list</Text>
+        </View>
       </View>
+
       <StorePicker />
-      <ListComposer onAddCustom={addItem} onAddProduct={addProductItem} />
-      <FlatList
-        data={items}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        contentContainerClassName={items.length === 0 ? 'flex-1' : ''}
-        ListEmptyComponent={
-          <EmptyState
-            icon={ShoppingBasket}
-            heading="Your list is empty"
-            body="Search for a product or type any text and tap +."
-          />
-        }
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      />
-      <RunningTotalBar
-        remainingCount={remainingCount}
-        checkedCount={checkedCount}
-        total={total}
-        storeLabel={storeLabel}
-        onClearChecked={clearChecked}
-      />
+      <ListComposer ref={composerRef} onAddCustom={addItem} onAddProduct={handleAddProduct} />
+
+      {isEmpty ? (
+        <EmptyList
+          onScan={() => router.push('/(tabs)/scan')}
+          onSearch={() => composerRef.current?.focus()}
+        />
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: 220 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {remaining.length > 0 ? (
+            <>
+              <ListSectionHeader label="To buy" count={remaining.length} />
+              <View className="mx-3 rounded-lg overflow-hidden bg-surface border-[0.5px] border-border">
+                {remaining.map(renderRow)}
+              </View>
+            </>
+          ) : null}
+
+          {checked.length > 0 ? (
+            <>
+              <ListSectionHeader
+                label="In cart"
+                count={checked.length}
+                action={{ label: 'Clear', onPress: clearChecked }}
+              />
+              <View className="mx-3 rounded-lg overflow-hidden bg-surface border-[0.5px] border-border">
+                {checked.map(renderRow)}
+              </View>
+            </>
+          ) : null}
+        </ScrollView>
+      )}
+
+      {!isEmpty ? (
+        <RunningTotalCard
+          remainingCount={remaining.length}
+          checkedCount={checked.length}
+          total={total}
+          storeLabel={storeLabel}
+          {...(checked.length > 0 ? { onClearChecked: clearChecked } : {})}
+          onCompareStores={() => logger.info('compare-stores tapped — sheet lands in a future session')}
+        />
+      ) : null}
     </SafeAreaView>
+  );
+}
+
+type EmptyListProps = { onScan: () => void; onSearch: () => void };
+
+function EmptyList({ onScan, onSearch }: EmptyListProps) {
+  const c = useThemedColors();
+  return (
+    <View className="flex-1 items-center justify-center px-8" style={{ gap: 16 }}>
+      <View
+        className="w-[88px] h-[88px] rounded-xl items-center justify-center bg-brand-primary/10"
+      >
+        <ShoppingBasket size={44} color={c.brand.primary} strokeWidth={1.6} />
+      </View>
+      <View className="items-center">
+        <Text className="text-h2 text-primary mb-1.5">Your list is empty</Text>
+        <Text className="text-body text-secondary text-center" style={{ maxWidth: 280 }}>
+          Scan a barcode, search for a product, or type to add the first item.
+        </Text>
+      </View>
+      <View className="w-full mt-2" style={{ gap: 10 }}>
+        <Pressable
+          onPress={onScan}
+          accessibilityRole="button"
+          accessibilityLabel="Scan an item"
+          className="h-[52px] rounded-lg bg-brand-primary items-center justify-center flex-row"
+          style={{ gap: 8 }}
+        >
+          <Scan size={20} color="white" />
+          <Text className="text-body font-semibold text-brand-primary-fg">Scan an item</Text>
+        </Pressable>
+        <Pressable
+          onPress={onSearch}
+          accessibilityRole="button"
+          accessibilityLabel="Search products"
+          className="h-11 rounded-lg bg-surface border-[0.5px] border-border items-center justify-center flex-row"
+          style={{ gap: 8 }}
+        >
+          <Search size={18} color={c.text.primary} />
+          <Text className="text-body-sm font-medium text-primary">Search products</Text>
+        </Pressable>
+        <Pressable
+          onPress={onSearch}
+          accessibilityRole="button"
+          accessibilityLabel="Type an item"
+          className="h-11 items-center justify-center flex-row"
+          style={{ gap: 6 }}
+        >
+          <Pencil size={16} color={c.brand.primary} />
+          <Text className="text-body-sm font-semibold text-brand-primary">Type an item</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }

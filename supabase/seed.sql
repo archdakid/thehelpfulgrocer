@@ -17,18 +17,18 @@ on conflict (name, region) do nothing;
 -- Real UPCs where known; placeholders prefixed `INTERNAL-` where the product
 -- has no canonical barcode (e.g. local produce).
 -- =============================================================================
-insert into public.products (upc, name, brand) values
-  ('7622210449283', 'Oreo Original Cookies 137g',     'Mondelez'),
-  ('012000161155',  'Pepsi Cola 2L',                  'PepsiCo'),
-  ('028400157810',  'Lay''s Classic Potato Chips 184g','Frito-Lay'),
-  ('041196910759',  'Heinz Tomato Ketchup 397g',      'Heinz'),
-  ('024000162216',  'Hunt''s Tomato Sauce 8oz',       'Hunt''s'),
-  ('051000012517',  'Campbell''s Chicken Noodle Soup','Campbell''s'),
-  ('054500001234',  'Carib Beer 6-pack 275ml',        'Carib Brewery'),
-  ('086600000174',  'Solo Apple Juice 1L',            'Solo Beverages'),
-  ('INTERNAL-RICE-1KG', 'White Rice 1kg',             'Generic'),
-  ('INTERNAL-FLOUR-2KG','All-Purpose Flour 2kg',      'Generic')
-on conflict (upc) do nothing;
+insert into public.products (upc, name, brand, category) values
+  ('7622210449283', 'Oreo Original Cookies 137g',     'Mondelez',      'snacks'),
+  ('012000161155',  'Pepsi Cola 2L',                  'PepsiCo',       'beverage'),
+  ('028400157810',  'Lay''s Classic Potato Chips 184g','Frito-Lay',    'snacks'),
+  ('041196910759',  'Heinz Tomato Ketchup 397g',      'Heinz',         'pantry'),
+  ('024000162216',  'Hunt''s Tomato Sauce 8oz',       'Hunt''s',       'pantry'),
+  ('051000012517',  'Campbell''s Chicken Noodle Soup','Campbell''s',   'pantry'),
+  ('054500001234',  'Carib Beer 6-pack 275ml',        'Carib Brewery', 'beverage'),
+  ('086600000174',  'Solo Apple Juice 1L',            'Solo Beverages','beverage'),
+  ('INTERNAL-RICE-1KG', 'White Rice 1kg',             'Generic',       'pantry'),
+  ('INTERNAL-FLOUR-2KG','All-Purpose Flour 2kg',      'Generic',       'pantry')
+on conflict (upc) do update set category = excluded.category;
 
 -- =============================================================================
 -- Admin-observed prices: ~40 observations across the 5 stores.

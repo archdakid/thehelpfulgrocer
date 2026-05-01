@@ -9,6 +9,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import { useProduct } from '@/hooks/useProduct';
 import { usePricesForProduct } from '@/hooks/usePricesForProduct';
 import { logger } from '@/lib/logger';
+import { useThemedColors } from '@/lib/themedColors';
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -22,6 +23,7 @@ function extractErrorMessage(error: unknown): string {
 export default function ProductDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const c = useThemedColors();
   const productQuery = useProduct(id);
   const pricesQuery = usePricesForProduct(id);
 
@@ -46,7 +48,7 @@ export default function ProductDetailScreen() {
             accessibilityLabel="Go back"
             className="w-11 h-11 items-center justify-center"
           >
-            <ArrowLeft size={24} color="rgb(26 26 24)" />
+            <ArrowLeft size={24} color={c.text.primary} />
           </Pressable>
         </View>
 
@@ -82,7 +84,7 @@ export default function ProductDetailScreen() {
                       contentFit="contain"
                     />
                   ) : (
-                    <ImageOff size={48} color="rgb(136 135 128)" strokeWidth={1.5} />
+                    <ImageOff size={48} color={c.text.tertiary} strokeWidth={1.5} />
                   )}
                 </View>
                 <Text className="text-h2 text-primary">{productQuery.data.name}</Text>

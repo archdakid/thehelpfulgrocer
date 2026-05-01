@@ -2,10 +2,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
+import type { CategoryId } from '@/constants/categories';
+
 export type ListItem = {
   id: string;
   name: string;
   productId: string | null;
+  brand: string | null;
+  category: CategoryId | null;
   quantity: number;
   checked: boolean;
   addedAt: number;
@@ -14,7 +18,12 @@ export type ListItem = {
 type ListState = {
   items: ListItem[];
   addItem: (name: string) => void;
-  addProductItem: (product: { id: string; name: string }) => void;
+  addProductItem: (product: {
+    id: string;
+    name: string;
+    brand: string | null;
+    category: CategoryId | null;
+  }) => void;
   removeItem: (id: string) => void;
   toggleChecked: (id: string) => void;
   setQuantity: (id: string, quantity: number) => void;
@@ -37,6 +46,8 @@ export const useListStore = create<ListState>()(
             id: makeId(),
             name: trimmed,
             productId: null,
+            brand: null,
+            category: null,
             quantity: 1,
             checked: false,
             addedAt: Date.now(),
@@ -58,6 +69,8 @@ export const useListStore = create<ListState>()(
             id: makeId(),
             name: product.name,
             productId: product.id,
+            brand: product.brand,
+            category: product.category,
             quantity: 1,
             checked: false,
             addedAt: Date.now(),
@@ -84,15 +97,20 @@ export const useListStore = create<ListState>()(
     {
       name: 'smartshopper-list',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 2,
+      version: 3,
       migrate: (persistedState, version) => {
-        if (version < 2 && persistedState && typeof persistedState === 'object') {
+        if (persistedState && typeof persistedState === 'object') {
           const state = persistedState as { items?: unknown[] };
           if (Array.isArray(state.items)) {
-            state.items = state.items.map((item) => ({
-              ...(item as Record<string, unknown>),
-              productId: null,
-            }));
+            state.items = state.items.map((raw) => {
+              const item = raw as Record<string, unknown>;
+              if (version < 2) item.productId = item.productId ?? null;
+              if (version < 3) {
+                item.brand = item.brand ?? null;
+                item.category = item.category ?? null;
+              }
+              return item;
+            });
           }
         }
         return persistedState as ListState;

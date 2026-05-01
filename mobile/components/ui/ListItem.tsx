@@ -1,6 +1,8 @@
 import { ChevronRight } from 'lucide-react-native';
 import { Pressable, Text, View } from 'react-native';
 
+import { useThemedColors } from '@/lib/themedColors';
+
 type ListItemProps = {
   title: string;
   subtitle?: string;
@@ -22,6 +24,7 @@ export default function ListItem({
   showChevron = false,
   accessibilityLabel,
 }: ListItemProps) {
+  const c = useThemedColors();
   const content = (
     <View className="flex-row items-center px-4 py-3 bg-surface border-b-[0.5px] border-border min-h-14">
       {leading ? <View className="mr-3">{leading}</View> : null}
@@ -43,7 +46,7 @@ export default function ListItem({
           {trailingText}
         </Text>
       ) : null}
-      {showChevron ? <ChevronRight size={20} color="rgb(136 135 128)" className="ml-2" /> : null}
+      {showChevron ? <ChevronRight size={20} color={c.text.tertiary} className="ml-2" /> : null}
     </View>
   );
 

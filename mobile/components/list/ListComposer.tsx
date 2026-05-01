@@ -1,10 +1,11 @@
 import { Plus, Search } from 'lucide-react-native';
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 
 import Input from '@/components/ui/Input';
 import { useSearchProducts } from '@/hooks/useSearchProducts';
 import type { Product } from '@/hooks/useProduct';
+import { useThemedColors } from '@/lib/themedColors';
 
 const DEBOUNCE_MS = 250;
 const MIN_QUERY_LENGTH = 2;
@@ -14,15 +15,27 @@ type ListComposerProps = {
   onAddProduct: (product: Product) => void;
 };
 
-export default function ListComposer({ onAddCustom, onAddProduct }: ListComposerProps) {
+export type ListComposerHandle = {
+  focus: () => void;
+};
+
+const ListComposer = forwardRef<ListComposerHandle, ListComposerProps>(function ListComposer(
+  { onAddCustom, onAddProduct },
+  ref,
+) {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const inputRef = useRef<TextInput>(null);
+  const c = useThemedColors();
 
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(query.trim()), DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [query]);
+
+  useImperativeHandle(ref, () => ({
+    focus: () => inputRef.current?.focus(),
+  }));
 
   const search = useSearchProducts(debounced);
   const showResults = debounced.length >= MIN_QUERY_LENGTH;
@@ -95,7 +108,7 @@ export default function ListComposer({ onAddCustom, onAddProduct }: ListComposer
                 accessibilityLabel={`Add ${product.name} to list`}
                 className="flex-row items-center px-4 py-3 border-b-[0.5px] border-border"
               >
-                <Search size={16} color="rgb(136 135 128)" />
+                <Search size={16} color={c.text.tertiary} />
                 <View className="flex-1 ml-3">
                   <Text className="text-body text-primary" numberOfLines={1}>
                     {product.name}
@@ -123,4 +136,6 @@ export default function ListComposer({ onAddCustom, onAddProduct }: ListComposer
       ) : null}
     </View>
   );
-}
+});
+
+export default ListComposer;

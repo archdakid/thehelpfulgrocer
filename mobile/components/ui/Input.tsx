@@ -1,6 +1,8 @@
 import { forwardRef, useState } from 'react';
 import { TextInput, type TextInputProps } from 'react-native';
 
+import { useThemedColors } from '@/lib/themedColors';
+
 type InputProps = Omit<TextInputProps, 'className'> & {
   accessibilityLabel: string;
 };
@@ -10,12 +12,13 @@ const Input = forwardRef<TextInput, InputProps>(function Input(
   ref,
 ) {
   const [isFocused, setIsFocused] = useState(false);
+  const c = useThemedColors();
 
   return (
     <TextInput
       ref={ref}
       accessibilityLabel={accessibilityLabel}
-      placeholderTextColor="rgb(136 135 128)"
+      placeholderTextColor={c.text.tertiary}
       onFocus={(event) => {
         setIsFocused(true);
         onFocus?.(event);

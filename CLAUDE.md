@@ -107,6 +107,7 @@ smartshopper/
 | Naming conventions, file structure | `docs/CODING_STANDARDS.md` |
 | Why we chose X over Y | `docs/DECISIONS.md` |
 | Big-picture: what we're building and why | `docs/PROJECT_OVERVIEW.md` |
+| In-flight design intent (mockups + notes) | `design/` (start with `design/NOTES.md`) |
 
 ---
 
