@@ -16,4 +16,7 @@ export const queryKeys = {
     ['prices', 'list-items', 'all-stores', [...productIds].sort()] as const,
   profile: (userId: string | null) => ['profile', userId] as const,
   offProduct: (upc: string | null) => ['off', 'product', upc] as const,
+  receipts: (userId: string | null) => ['receipts', userId] as const,
+  receipt: (id: string | null) => ['receipts', 'detail', id] as const,
+  receiptItems: (receiptId: string | null) => ['receipts', 'items', receiptId] as const,
 } as const;

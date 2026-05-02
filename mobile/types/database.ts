@@ -39,6 +39,60 @@ export type Database = {
   }
   public: {
     Tables: {
+      flagged_items: {
+        Row: {
+          auto_created_product_id: string | null
+          created_at: string
+          id: string
+          notes: string | null
+          reason: string
+          receipt_item_id: string
+          resolution: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          auto_created_product_id?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          reason: string
+          receipt_item_id: string
+          resolution?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          auto_created_product_id?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          reason?: string
+          receipt_item_id?: string
+          resolution?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "flagged_items_auto_created_product_id_fkey"
+            columns: ["auto_created_product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "flagged_items_receipt_item_id_fkey"
+            columns: ["receipt_item_id"]
+            isOneToOne: false
+            referencedRelation: "receipt_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       prices: {
         Row: {
           amount_minor_units: number
@@ -46,6 +100,7 @@ export type Database = {
           id: string
           observed_at: string
           product_id: string
+          receipt_item_id: string | null
           source: string
           store_id: string
         }
@@ -55,6 +110,7 @@ export type Database = {
           id?: string
           observed_at?: string
           product_id: string
+          receipt_item_id?: string | null
           source: string
           store_id: string
         }
@@ -64,6 +120,7 @@ export type Database = {
           id?: string
           observed_at?: string
           product_id?: string
+          receipt_item_id?: string | null
           source?: string
           store_id?: string
         }
@@ -76,10 +133,49 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "prices_receipt_item_id_fkey"
+            columns: ["receipt_item_id"]
+            isOneToOne: false
+            referencedRelation: "receipt_items"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "prices_store_id_fkey"
             columns: ["store_id"]
             isOneToOne: false
             referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      product_aliases: {
+        Row: {
+          alias: string
+          created_at: string
+          id: string
+          product_id: string
+          source: string
+        }
+        Insert: {
+          alias: string
+          created_at?: string
+          id?: string
+          product_id: string
+          source?: string
+        }
+        Update: {
+          alias?: string
+          created_at?: string
+          id?: string
+          product_id?: string
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_aliases_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
             referencedColumns: ["id"]
           },
         ]
@@ -138,6 +234,131 @@ export type Database = {
         }
         Relationships: []
       }
+      receipt_items: {
+        Row: {
+          created_at: string
+          id: string
+          line_total_minor_units: number
+          match_confidence: number | null
+          matched_product_id: string | null
+          needs_review: boolean
+          position: number
+          quantity: number
+          raw_text: string
+          receipt_id: string
+          unit_price_minor_units: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          line_total_minor_units: number
+          match_confidence?: number | null
+          matched_product_id?: string | null
+          needs_review?: boolean
+          position: number
+          quantity?: number
+          raw_text: string
+          receipt_id: string
+          unit_price_minor_units?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          line_total_minor_units?: number
+          match_confidence?: number | null
+          matched_product_id?: string | null
+          needs_review?: boolean
+          position?: number
+          quantity?: number
+          raw_text?: string
+          receipt_id?: string
+          unit_price_minor_units?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "receipt_items_matched_product_id_fkey"
+            columns: ["matched_product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "receipt_items_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: false
+            referencedRelation: "receipts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      receipts: {
+        Row: {
+          captured_at: string | null
+          created_at: string
+          currency: string | null
+          id: string
+          image_path: string
+          notes: string | null
+          ocr_text: string | null
+          parsed_store_name: string | null
+          process_error: string | null
+          processed_at: string | null
+          receipt_date: string | null
+          status: Database["public"]["Enums"]["receipt_status"]
+          store_id: string | null
+          total_amount_minor_units: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          captured_at?: string | null
+          created_at?: string
+          currency?: string | null
+          id?: string
+          image_path: string
+          notes?: string | null
+          ocr_text?: string | null
+          parsed_store_name?: string | null
+          process_error?: string | null
+          processed_at?: string | null
+          receipt_date?: string | null
+          status?: Database["public"]["Enums"]["receipt_status"]
+          store_id?: string | null
+          total_amount_minor_units?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          captured_at?: string | null
+          created_at?: string
+          currency?: string | null
+          id?: string
+          image_path?: string
+          notes?: string | null
+          ocr_text?: string | null
+          parsed_store_name?: string | null
+          process_error?: string | null
+          processed_at?: string | null
+          receipt_date?: string | null
+          status?: Database["public"]["Enums"]["receipt_status"]
+          store_id?: string | null
+          total_amount_minor_units?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "receipts_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stores: {
         Row: {
           created_at: string
@@ -193,10 +414,18 @@ export type Database = {
       }
     }
     Functions: {
-      [_ in never]: never
+      match_receipt_text: {
+        Args: { needle: string }
+        Returns: {
+          confidence: number
+          product_id: string
+        }[]
+      }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
-      [_ in never]: never
+      receipt_status: "uploaded" | "processing" | "processed" | "failed"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -326,6 +555,8 @@ export const Constants = {
     Enums: {},
   },
   public: {
-    Enums: {},
+    Enums: {
+      receipt_status: ["uploaded", "processing", "processed", "failed"],
+    },
   },
 } as const
