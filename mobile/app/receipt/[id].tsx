@@ -1,6 +1,8 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { ChevronLeft, ImageOff, Package, RefreshCw, WifiOff } from 'lucide-react-native';
+import { useEffect } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -19,18 +21,33 @@ import {
 import { useStores } from '@/hooks/useStores';
 import { formatPrice, formatRelativeTime } from '@/lib/format';
 import { logger } from '@/lib/logger';
+import { queryKeys } from '@/lib/queryKeys';
 import { useThemedColors } from '@/lib/themedColors';
 
 export default function ReceiptDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const c = useThemedColors();
+  const qc = useQueryClient();
   const receiptQuery = useReceipt(id ?? null);
   const imagePath = receiptQuery.data?.imagePath ?? null;
   const signedUrlQuery = useReceiptSignedUrl(imagePath);
   const itemsQuery = useReceiptItems(id ?? null);
   const reprocess = useReprocessReceipt();
   const { data: stores } = useStores();
+
+  // The items query first fires while the receipt is still 'processing' and
+  // caches an empty result for the global 5-minute staleTime. Without this
+  // effect, the items inserted by the Edge Function would never appear until
+  // the cache expired or the user pulled to refresh. Triggering on the status
+  // transition to 'processed' refetches exactly once, when there's actually
+  // something new to read.
+  const status = receiptQuery.data?.status;
+  useEffect(() => {
+    if (status === 'processed' && id) {
+      void qc.invalidateQueries({ queryKey: queryKeys.receiptItems(id) });
+    }
+  }, [status, id, qc]);
 
   if (receiptQuery.isError) logger.error('useReceipt failed', { id, error: receiptQuery.error });
   if (signedUrlQuery.isError) {

@@ -1,3 +1,5 @@
+import { File as FsFile } from 'expo-file-system';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/queryKeys';
@@ -226,18 +228,39 @@ export function useReceiptItems(receiptId: string | null) {
 type UploadInput = {
   // file:// URI from expo-image-picker
   localUri: string;
-  // Best guess from picker (e.g. "image/jpeg"). Drives the file extension.
-  mimeType: string;
+  // Picker-reported dimensions; used to decide whether to downscale before
+  // uploading. Required so we don't upscale small images.
+  width: number;
+  height: number;
   storeId?: string | null;
   notes?: string | null;
   capturedAt?: string | null;
 };
 
-function extensionFor(mimeType: string): string {
-  if (mimeType === 'image/png') return 'png';
-  if (mimeType === 'image/heic' || mimeType === 'image/heif') return 'heic';
-  if (mimeType === 'image/webp') return 'webp';
-  return 'jpg';
+// Gemini's vision endpoint rejects with "Unable to process input image" when
+// inline_data approaches ~7MB or when the format isn't a clean JPEG/PNG. A
+// fresh phone capture at 12MP+ blows past that envelope even after JPEG
+// re-encode, so we cap the long edge here. 1600px is well above what receipt
+// OCR needs while staying under Gemini's safe inline limit.
+const MAX_EDGE_PX = 1600;
+
+async function normalizeToJpeg(
+  localUri: string,
+  width: number,
+  height: number,
+): Promise<string> {
+  const longEdge = Math.max(width, height);
+  // Only resize when the original is larger — passing resize: { width: N }
+  // would upscale a smaller image, which wastes bytes and softens text.
+  const actions =
+    longEdge > MAX_EDGE_PX
+      ? [{ resize: width >= height ? { width: MAX_EDGE_PX } : { height: MAX_EDGE_PX } }]
+      : [];
+  const result = await manipulateAsync(localUri, actions, {
+    compress: 0.85,
+    format: SaveFormat.JPEG,
+  });
+  return result.uri;
 }
 
 // Fire-and-forget invocation of the OCR Edge Function. We don't await it from
@@ -266,31 +289,37 @@ export function useUploadReceipt() {
       // before inserting the row, so the insert is the last step and either
       // both (object + row) succeed or we abandon an orphan object.
       const receiptId = generateReceiptId();
-      const ext = extensionFor(input.mimeType);
-      const path = `${userId}/${receiptId}.${ext}`;
+      const path = `${userId}/${receiptId}.jpg`;
 
-      // Read the picker's file:// URI into bytes. RN's fetch() against a
-      // file:// URI is the documented Expo pattern; we re-throw with a
-      // descriptive message so a failure surfaces "fetch failed" rather
-      // than a generic Error in the logs. Known issue on some Android
-      // configs is a 0-byte blob from this path; we guard against that
-      // explicitly below.
-      let blob: Blob;
+      let normalizedUri: string;
       try {
-        const response = await fetch(input.localUri);
-        blob = await response.blob();
+        normalizedUri = await normalizeToJpeg(input.localUri, input.width, input.height);
       } catch (err) {
-        throw wrapError('Read picked file failed', err);
+        throw wrapError('Image normalize failed', err);
       }
-      if (blob.size === 0) {
+
+      // Read the normalized JPEG via expo-file-system, NOT fetch(file://).blob().
+      // The latter is a long-standing RN footgun: it returns a Blob with a
+      // plausible .size but whose bytes don't survive supabase-js's upload —
+      // the object lands in storage either zero-bytes or corrupted, which is
+      // exactly what we saw (blank previews + Gemini "Unable to process input
+      // image"). Reading via the File API hands supabase-js a real
+      // ArrayBuffer it can serialize correctly.
+      let bytes: ArrayBuffer;
+      try {
+        bytes = await new FsFile(normalizedUri).arrayBuffer();
+      } catch (err) {
+        throw wrapError('Read normalized file failed', err);
+      }
+      if (bytes.byteLength === 0) {
         throw new Error(
-          `Picked file is empty (0 bytes). uri=${input.localUri} mimeType=${input.mimeType}`,
+          `Normalized file is empty (0 bytes). originalUri=${input.localUri}`,
         );
       }
 
       const { error: uploadError } = await supabase.storage
         .from('receipts')
-        .upload(path, blob, { contentType: input.mimeType, upsert: false });
+        .upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
       if (uploadError) throw wrapError('Storage upload failed', uploadError);
 
       const { data, error } = await supabase

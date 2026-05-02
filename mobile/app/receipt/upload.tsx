@@ -14,7 +14,8 @@ import { useThemedColors } from '@/lib/themedColors';
 
 type Picked = {
   uri: string;
-  mimeType: string;
+  width: number;
+  height: number;
 };
 
 export default function ReceiptUploadScreen() {
@@ -38,7 +39,7 @@ export default function ReceiptUploadScreen() {
     if (result.canceled) return;
     const asset = result.assets[0];
     if (!asset) return;
-    setPicked({ uri: asset.uri, mimeType: asset.mimeType ?? 'image/jpeg' });
+    setPicked({ uri: asset.uri, width: asset.width, height: asset.height });
   };
 
   const onCapture = async () => {
@@ -55,7 +56,7 @@ export default function ReceiptUploadScreen() {
     if (result.canceled) return;
     const asset = result.assets[0];
     if (!asset) return;
-    setPicked({ uri: asset.uri, mimeType: asset.mimeType ?? 'image/jpeg' });
+    setPicked({ uri: asset.uri, width: asset.width, height: asset.height });
   };
 
   const onSubmit = async () => {
@@ -63,7 +64,8 @@ export default function ReceiptUploadScreen() {
     try {
       const receipt = await upload.mutateAsync({
         localUri: picked.uri,
-        mimeType: picked.mimeType,
+        width: picked.width,
+        height: picked.height,
         capturedAt: new Date().toISOString(),
       });
       router.replace(`/receipt/${receipt.id}`);
