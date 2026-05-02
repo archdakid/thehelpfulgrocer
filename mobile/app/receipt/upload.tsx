@@ -68,6 +68,19 @@ export default function ReceiptUploadScreen() {
       });
       router.replace(`/receipt/${receipt.id}`);
     } catch (err) {
+      // Direct console.error first so the raw err object surfaces in RN's
+      // inspector regardless of what the logger pipeline does with it.
+      // eslint-disable-next-line no-console
+      console.error(
+        '[upload] raw =',
+        err,
+        '| typeof =',
+        typeof err,
+        '| message =',
+        (err as { message?: unknown })?.message,
+        '| stack =',
+        (err as { stack?: unknown })?.stack,
+      );
       logger.error('receipt upload failed', {
         error: err,
         errorType: typeof err,
