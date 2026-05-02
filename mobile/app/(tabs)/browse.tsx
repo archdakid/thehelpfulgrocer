@@ -40,9 +40,7 @@ export default function BrowseScreen() {
       {/* Search field (visual stub for this session) */}
       <View className="px-4 pb-3">
         <Pressable
-          onPress={() => {
-            // TODO(yashua): wire global product search here in a later session.
-          }}
+          onPress={() => router.push('/search')}
           accessibilityRole="search"
           accessibilityLabel={placeholder}
           className="flex-row items-center bg-surface border-[0.5px] border-border rounded-md px-3.5"

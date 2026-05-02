@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-01** (end of Session 14 — OFF image fallback chain).
+Last updated: **2026-05-01** (end of Session 15a — Browse polish: search + sort).
 
 ---
 
@@ -48,6 +48,10 @@ Last updated: **2026-05-01** (end of Session 14 — OFF image fallback chain).
 - [x] `lib/productImage.ts` `resolveProductImage()` — implements the priority order from `DECISIONS.md`: OFF → our `image_url` → null
 - [x] Product detail uses the resolver and holds the `ImageOff` placeholder until OFF settles, eliminating the placeholder→image flicker for products OFF eventually returns
 
+### Polish round 15a — Browse (Session 15a)
+- [x] Browse search field opens `/search` (new top-level route): debounced TextInput, `useSearchProducts` results list, tap → product detail
+- [x] Category sort selector replaces the no-op TODO: A→Z, Z→A, Cheapest, Most expensive, Best savings, picked from a Modal sort sheet
+
 ### Features (per `docs/FEATURES.md`)
 - [x] **F1 — Grocery list** (local-only, AsyncStorage persistence, swipe-delete, qty stepper, sectioned)
 - [x] **F4 — Price comparison popup** (delivered as both product detail and the compare-stores sheet)
@@ -63,9 +67,7 @@ These are working code paths but stub behavior — they render, they don't do th
 - **Receipts tab** — placeholder screen ("No receipts yet"). F6 is the build-out.
 - **Scan tab** — stub. Real camera flow needs a dev build (per `CLAUDE.md` gotcha).
 - **Auth email confirmation** — sign-up surfaces a "check your email" message; the actual confirmation/redirect flow is whatever Supabase has configured for the project (no deep-link handler in the app yet).
-- **Browse search field** — visual affordance only; tap is a no-op TODO.
-- **Browse "Often Bought" chips** — visual only; tap is a no-op TODO.
-- **Category sort selector** — labeled "Sort: A → Z" but tap is a no-op TODO. Default sort is alphabetical.
+- **Browse "Often Bought" chips** — visual only; tap is a no-op TODO. Will wire when receipt history exists.
 - **Save TT$X callout in running-total card** — works in at-store mode; hidden in Cheapest mode (correct).
 - **`/store/[id]` screen** — orphaned (no longer reachable from Browse, but the route still works for direct nav).
 
@@ -123,7 +125,8 @@ main
                                         └── feature/auth-scaffold
                                             └── feature/profiles-table
                                                 └── feature/openfoodfacts
-                                                    └── feature/off-image-fallback  (current)
+                                                    └── feature/off-image-fallback
+                                                        └── feature/polish-browse  (current)
 ```
 
 When ready to consolidate: merge each in order into `main`, or squash-merge groups (foundation → design pass → backend → features).

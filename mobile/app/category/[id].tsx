@@ -1,8 +1,8 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, PackageOpen, WifiOff } from 'lucide-react-native';
-import { useMemo } from 'react';
-import { ActivityIndicator, FlatList, Pressable, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ArrowLeft, Check, PackageOpen, WifiOff } from 'lucide-react-native';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Modal, Pressable, Text, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import CategoryProductRow from '@/components/browse/CategoryProductRow';
 import CategoryGlyph from '@/components/ui/CategoryGlyph';
@@ -12,8 +12,21 @@ import { useProductsInCategory, type CategoryProductRow as CategoryRow } from '@
 import { useStores } from '@/hooks/useStores';
 import { isCategoryId as isCategoryIdHelper } from '@/constants/categories';
 import { logger } from '@/lib/logger';
+import { useThemedColors } from '@/lib/themedColors';
 import { useListStore } from '@/stores/useListStore';
 import { useUIStore } from '@/stores/useUIStore';
+
+type SortKey = 'name-asc' | 'name-desc' | 'cheapest' | 'expensive' | 'savings';
+
+const SORT_LABELS: Record<SortKey, string> = {
+  'name-asc': 'A → Z',
+  'name-desc': 'Z → A',
+  cheapest: 'Cheapest',
+  expensive: 'Most expensive',
+  savings: 'Best savings',
+};
+
+const SORT_ORDER: SortKey[] = ['name-asc', 'name-desc', 'cheapest', 'expensive', 'savings'];
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -32,6 +45,8 @@ export default function CategoryDetailScreen() {
   const addProductItem = useListStore((s) => s.addProductItem);
   const productsQuery = useProductsInCategory(id, activeStoreId);
   const { data: stores } = useStores();
+  const [sort, setSort] = useState<SortKey>('name-asc');
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
 
   const inListIds = useMemo(() => {
     const set = new Set<string>();
@@ -58,6 +73,32 @@ export default function CategoryDetailScreen() {
   const colors = categoryColors[id];
   const products = productsQuery.data ?? [];
   const storeCount = stores?.length ?? 0;
+
+  // The query already returns A→Z. Other sort keys reorder client-side; rows
+  // without a price at the active store sort to the bottom in both
+  // price-based directions so the user sees stocked items first.
+  const sortedProducts = useMemo(() => {
+    if (sort === 'name-asc') return products;
+    const list = [...products];
+    switch (sort) {
+      case 'name-desc':
+        return list.reverse();
+      case 'cheapest':
+        return list.sort(
+          (a, b) =>
+            (a.here?.amountMinorUnits ?? Number.POSITIVE_INFINITY) -
+            (b.here?.amountMinorUnits ?? Number.POSITIVE_INFINITY),
+        );
+      case 'expensive':
+        return list.sort(
+          (a, b) =>
+            (b.here?.amountMinorUnits ?? Number.NEGATIVE_INFINITY) -
+            (a.here?.amountMinorUnits ?? Number.NEGATIVE_INFINITY),
+        );
+      case 'savings':
+        return list.sort((a, b) => b.savingsMinor - a.savingsMinor);
+    }
+  }, [products, sort]);
 
   return (
     <>
@@ -113,20 +154,20 @@ export default function CategoryDetailScreen() {
           </View>
         </SafeAreaView>
 
-        {/* Sort row (stub — defaults to A→Z) */}
+        {/* Sort row */}
         <View className="flex-row items-center justify-between px-4 py-2.5 border-b-[0.5px] border-border">
           <Text className="text-caption text-secondary">
             <Text className="text-primary font-semibold">{products.length}</Text> items shown
           </Text>
           <Pressable
-            onPress={() => {
-              // TODO(yashua): wire sort options (Best savings / Cheapest / A-Z) when meaningful.
-            }}
+            onPress={() => setSortMenuOpen(true)}
             hitSlop={6}
             accessibilityRole="button"
-            accessibilityLabel="Sort options"
+            accessibilityLabel={`Sort options, currently ${SORT_LABELS[sort]}`}
           >
-            <Text className="text-body-sm font-semibold text-brand-primary">Sort: A → Z</Text>
+            <Text className="text-body-sm font-semibold text-brand-primary">
+              Sort: {SORT_LABELS[sort]}
+            </Text>
           </Pressable>
         </View>
 
@@ -151,7 +192,7 @@ export default function CategoryDetailScreen() {
           />
         ) : (
           <FlatList
-            data={products}
+            data={sortedProducts}
             keyExtractor={(row) => row.id}
             renderItem={({ item }) => (
               <CategoryProductRow
@@ -166,8 +207,86 @@ export default function CategoryDetailScreen() {
             showsVerticalScrollIndicator={false}
           />
         )}
+
+        <SortSheet
+          visible={sortMenuOpen}
+          current={sort}
+          onSelect={setSort}
+          onClose={() => setSortMenuOpen(false)}
+        />
       </View>
     </>
+  );
+}
+
+type SortSheetProps = {
+  visible: boolean;
+  current: SortKey;
+  onSelect: (key: SortKey) => void;
+  onClose: () => void;
+};
+
+function SortSheet({ visible, current, onSelect, onClose }: SortSheetProps) {
+  const insets = useSafeAreaInsets();
+  const c = useThemedColors();
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <View className="flex-1 justify-end" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}>
+        <Pressable
+          style={{ flex: 1 }}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss sort menu"
+        />
+        <View
+          className="bg-surface rounded-t-xl"
+          style={{ paddingBottom: Math.max(insets.bottom, 12) }}
+        >
+          <View className="items-center pt-2 pb-1">
+            <View
+              className="rounded-full bg-border-strong"
+              style={{ width: 40, height: 5, opacity: 0.5 }}
+            />
+          </View>
+          <Text className="text-h3 text-primary px-5 pt-2 pb-2">Sort by</Text>
+          {SORT_ORDER.map((key, idx) => {
+            const selected = current === key;
+            return (
+              <Pressable
+                key={key}
+                onPress={() => {
+                  onSelect(key);
+                  onClose();
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Sort by ${SORT_LABELS[key]}`}
+                accessibilityState={{ selected }}
+                className={`flex-row items-center justify-between px-5 py-3.5 active:bg-muted ${
+                  idx < SORT_ORDER.length - 1 ? 'border-b-[0.5px] border-border' : ''
+                }`}
+                style={{ minHeight: 52 }}
+              >
+                <Text
+                  className={`text-body ${
+                    selected ? 'text-brand-primary font-semibold' : 'text-primary'
+                  }`}
+                >
+                  {SORT_LABELS[key]}
+                </Text>
+                {selected ? <Check size={18} color={c.brand.primary} /> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+    </Modal>
   );
 }
 
