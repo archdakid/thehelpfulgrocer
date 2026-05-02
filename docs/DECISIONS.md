@@ -368,6 +368,23 @@ Within-receipt dedup keys off normalized `raw_text` so 3 instances of "MILK 1L" 
 
 ---
 
+## 2026-05-02 — service_role grants are explicit, not inherited
+
+**Context:** First end-to-end test of `resolve-flagged-item` failed with `permission denied for table flagged_items` even though the function was authenticating with the service-role key. Inspecting `information_schema.role_table_grants` showed that `service_role` had only `REFERENCES`, `TRIGGER`, and `TRUNCATE` on every table in `public` — no `SELECT/INSERT/UPDATE/DELETE`. Default privileges on this project never granted CRUD to `service_role`, so every table created since session 1 inherited the empty set. RLS bypass on its own doesn't satisfy table-level GRANT checks; the function looked authorized but PostgREST denied the read.
+
+**Decision:** Migration `0012_service_role_grants.sql` (a) backfills `select, insert, update, delete` for `service_role` on every public table the Edge Functions touch today, and (b) sets default privileges in schema `public` so any future table inherits the same grants automatically. Sequences get `usage, select` defaults too.
+
+**Reasoning:**
+- Every Edge Function this app will ever ship is going to write through service-role. Re-discovering this gotcha per migration is the kind of foot-gun you find at 2am.
+- `alter default privileges in schema public grant ... to service_role` makes future migrations correct-by-default. New tables get the grants without each migration having to remember the dance.
+- Constraining the migration to the tables we actually use today (rather than blanket-granting on `all tables in schema public`) keeps the diff auditable; future tables come in via the default.
+
+**Trade-offs accepted:**
+- Anyone reviewing this migration in isolation will see a broad-looking set of grants and wonder why. The migration's header comment captures the incident; this entry is the longer version.
+- We don't fix the same problem for the legacy postgres role or for any other custom role. None exist on this project; if one is added later, the same pattern applies.
+
+---
+
 ## Template for future entries
 
 ```markdown
