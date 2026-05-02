@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-02** (end of Session 17 — F8 Phase 1: admin panel scaffold + flagged_items review queue).
+Last updated: **2026-05-02** (end of Session 18a — F8 Phase 2 part 1: admin Stores CRUD).
 
 ---
 
@@ -82,6 +82,12 @@ Last updated: **2026-05-02** (end of Session 17 — F8 Phase 1: admin panel scaf
 - [x] Edge Function `supabase/functions/resolve-flagged-item`: JWT-bound admin re-check → service-role writes for all four resolution actions (`confirm` / `correct` / `reject` / `merge`). Centralizes the multi-table mutations (price backfill, receipt_item reassignment, alias upsert, auto-created product deletion) in one place so RLS stays narrow
 - [x] Decision logged: Edge-Function-over-loosened-RLS for admin resolution writes
 
+### Admin panel F8 Phase 2a — Stores CRUD (Session 18a)
+- [x] Migration `0013_stores_admin_writes.sql`: `stores.created_by` (FK to profiles, nullable for legacy seed rows) + `stores.updated_at` with a generic `set_updated_at()` trigger; admin-bypass SELECT policy so admins see inactive stores (the existing public "active only" policy still applies for anon/authenticated)
+- [x] Edge Function `supabase/functions/manage-store`: JWT-bound admin re-check → service-role writes for `create | rename | set_active`. Surfaces unique-violation (23505) as a friendly 409. No hard delete — `prices.store_id` cascades, so deactivation is the right pattern
+- [x] `/stores` page (server component) lists active + inactive sections, inline rename + activate/deactivate via server actions wrapping `functions.invoke('manage-store')` with the same JWT-passthrough trick the queue uses
+- [x] Shared `AdminShell` header component with nav between `/queue` and `/stores`
+
 ### Receipts F6 Phase 3 — matcher + price contribution + admin queue (Session 16c)
 - [x] Migration `0009_product_matching.sql`: enables `pg_trgm`, GIN trigram indexes on `lower(products.name)` and `lower(product_aliases.alias)`, new `product_aliases` table with source enum (`admin`/`receipt`/`manual`), and a `match_receipt_text(text)` SQL function returning the single best `(product_id, confidence)` above a 0.30 floor
 - [x] Migration `0010_flagged_items_and_price_link.sql`: `flagged_items` admin queue (reasons `unmatched` / `low_confidence` / `auto_created_product`, resolutions `confirmed` / `corrected` / `rejected` / `merged`, admin-only RLS), `prices.receipt_item_id` FK so contributed prices trace back to the line item that produced them
@@ -104,7 +110,7 @@ Last updated: **2026-05-02** (end of Session 17 — F8 Phase 1: admin panel scaf
 These are working code paths but stub behavior — they render, they don't do the full thing yet.
 
 - **Receipts tab** — Phases 1–3 shipped: upload, OCR, matching, price contribution, and admin queue. Items above 0.50 trigram similarity contribute `source='receipt'` rows to `prices`; below that they sit in the `flagged_items` queue. Unmatched-but-sane items auto-create products and still get queued.
-- **Admin panel F8 Phase 1** — scaffolded. Drains the `flagged_items` queue (list + per-item resolve). Stores CRUD, circular parsing, and product-image candidates are F8 Phase 2+ — out of scope for this round.
+- **Admin panel F8 Phase 2** — Stores CRUD shipped (Session 18a). Circular upload + parsing and product-image candidate review are still ahead. Bulk queue actions deferred until after circulars.
 - **Scan tab** — stub. Real camera flow needs a dev build (per `CLAUDE.md` gotcha).
 - **Auth email confirmation** — sign-up surfaces a "check your email" message; the actual confirmation/redirect flow is whatever Supabase has configured for the project (no deep-link handler in the app yet).
 - **Browse "Often Bought" chips** — visual only; tap is a no-op TODO. Will wire when receipt history exists.
@@ -116,7 +122,7 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **Admin panel F8 Phase 2** — stores CRUD, circular upload + parsing, product-image candidate review, and bulk actions on the queue. Phase 1 (queue list + per-item resolve) shipped in Session 17.
+1. **Admin panel F8 Phase 2 (cont.)** — stores CRUD shipped Session 18a. Still ahead: circular upload + parsing (Claude vision), product-image candidate review, and bulk queue actions.
 2. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
 3. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
 4. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).
