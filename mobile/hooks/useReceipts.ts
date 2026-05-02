@@ -349,15 +349,45 @@ export function useReprocessReceipt() {
 // `code`, `details`, `hint`, etc.). The logger.ts unwrap pass copies those
 // across automatically.
 function wrapError(stepLabel: string, cause: unknown): Error {
-  const base = cause instanceof Error ? cause : new Error(String(cause));
-  const wrapped = new Error(`${stepLabel}: ${base.message || 'unknown error'}`);
-  for (const key of Object.keys(base)) {
-    if (key === 'message' || key === 'stack') continue;
-    (wrapped as unknown as Record<string, unknown>)[key] = (
-      base as unknown as Record<string, unknown>
-    )[key];
+  // Supabase errors come back as plain objects ({ message, code, details,
+  // hint, ... }) — `cause instanceof Error` is false. Calling
+  // String({}) gives "[object Object]", which is exactly the useless
+  // wrapped message we kept seeing. Handle the three real cases:
+  //   1. Real Error instance — copy enumerable own-props for codes/etc.
+  //   2. Plain object with a `message` — use that.
+  //   3. Anything else — String() it.
+  if (cause instanceof Error) {
+    const wrapped = new Error(`${stepLabel}: ${cause.message || 'unknown error'}`);
+    for (const key of Object.keys(cause)) {
+      if (key === 'message' || key === 'stack') continue;
+      (wrapped as unknown as Record<string, unknown>)[key] = (
+        cause as unknown as Record<string, unknown>
+      )[key];
+    }
+    return wrapped;
   }
-  return wrapped;
+  if (cause && typeof cause === 'object') {
+    const obj = cause as Record<string, unknown>;
+    const msg =
+      typeof obj.message === 'string' && obj.message
+        ? obj.message
+        : safeStringify(obj);
+    const wrapped = new Error(`${stepLabel}: ${msg}`);
+    for (const key of Object.keys(obj)) {
+      if (key === 'message' || key === 'stack') continue;
+      (wrapped as unknown as Record<string, unknown>)[key] = obj[key];
+    }
+    return wrapped;
+  }
+  return new Error(`${stepLabel}: ${String(cause)}`);
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 // Hermes (the JS engine RN uses by default) historically ships without
