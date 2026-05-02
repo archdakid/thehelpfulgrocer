@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-02** (end of Session 18a — F8 Phase 2 part 1: admin Stores CRUD).
+Last updated: **2026-05-02** (end of Session 18b — F8 Phase 2 part 2: admin circular ingest pipeline).
 
 ---
 
@@ -88,6 +88,15 @@ Last updated: **2026-05-02** (end of Session 18a — F8 Phase 2 part 1: admin St
 - [x] `/stores` page (server component) lists active + inactive sections, inline rename + activate/deactivate via server actions wrapping `functions.invoke('manage-store')` with the same JWT-passthrough trick the queue uses
 - [x] Shared `AdminShell` header component with nav between `/queue` and `/stores`
 
+### Admin panel F8 Phase 2b — Circular ingest pipeline (Session 18b)
+- [x] Migration `0014_circulars.sql`: `circulars` (store_id, image_path, observed_week date, parse_status enum, parsed jsonb, process_error, audit timestamps) + `circular_items` (raw_name/brand/size/amount, pre-matched product_id + match_confidence, status enum, contributed_price_id + contributed_product_id audit links, unique (circular_id, position)). Admin-only RLS on both. Private `circulars` storage bucket with admin-only upload/read/delete policies
+- [x] Edge Function `supabase/functions/parse-circular`: JWT-bound admin re-check → service-role download of image → Gemini 2.5 Flash vision with `responseSchema` → insert circular_items → per-row trigram pre-match via existing `match_receipt_text` RPC. Idempotent (re-parse wipes prior items). Verbatim model output dumped into `circulars.parsed`. Reuses the same `GOOGLE_AI_API_KEY` secret the receipts pipeline uses
+- [x] Edge Function `supabase/functions/resolve-circular-item`: per-row accept/reject. On accept: applies admin's edits, contributes a `prices` row with `source='circular'` (observed_at = observed_week), auto-creates a product if no `targetProductId` was picked, upserts a `product_aliases` row, and links it all back via `contributed_price_id` + `contributed_product_id`. Rolls back the auto-created product if the price insert fails
+- [x] Edge Function `supabase/functions/create-circular`: thin wrapper that admin-checks, inserts the row with service-role, then fire-and-forget invokes `parse-circular`. Avoids needing service-role in the admin Next.js server (DECISIONS.md 2026-05-02 trust boundary)
+- [x] `/circulars` list (status badges) + `/circulars/new` upload form (store picker, ISO-week picker, file → admin-policy storage upload → server action) + `/circulars/[id]` review screen (sticky source image next to per-row inline edit + product picker + Accept/Reject), with a Re-parse button for failed/refresh paths
+- [x] `success` color token added to `tailwind.config.js`
+- [x] Decision logged: stick with Gemini 2.5 Flash for circulars (cost; one vendor; admin reviews every row anyway)
+
 ### Receipts F6 Phase 3 — matcher + price contribution + admin queue (Session 16c)
 - [x] Migration `0009_product_matching.sql`: enables `pg_trgm`, GIN trigram indexes on `lower(products.name)` and `lower(product_aliases.alias)`, new `product_aliases` table with source enum (`admin`/`receipt`/`manual`), and a `match_receipt_text(text)` SQL function returning the single best `(product_id, confidence)` above a 0.30 floor
 - [x] Migration `0010_flagged_items_and_price_link.sql`: `flagged_items` admin queue (reasons `unmatched` / `low_confidence` / `auto_created_product`, resolutions `confirmed` / `corrected` / `rejected` / `merged`, admin-only RLS), `prices.receipt_item_id` FK so contributed prices trace back to the line item that produced them
@@ -110,7 +119,7 @@ Last updated: **2026-05-02** (end of Session 18a — F8 Phase 2 part 1: admin St
 These are working code paths but stub behavior — they render, they don't do the full thing yet.
 
 - **Receipts tab** — Phases 1–3 shipped: upload, OCR, matching, price contribution, and admin queue. Items above 0.50 trigram similarity contribute `source='receipt'` rows to `prices`; below that they sit in the `flagged_items` queue. Unmatched-but-sane items auto-create products and still get queued.
-- **Admin panel F8 Phase 2** — Stores CRUD shipped (Session 18a). Circular upload + parsing and product-image candidate review are still ahead. Bulk queue actions deferred until after circulars.
+- **Admin panel F8 Phase 2** — Stores CRUD shipped (Session 18a). Circular ingest (upload → Gemini vision parse → admin review → price contribution) shipped (Session 18b). Product-image candidate review and bulk queue actions are still ahead. `GOOGLE_AI_API_KEY` is already set as a function secret from the receipts pipeline — no new secret needed.
 - **Scan tab** — stub. Real camera flow needs a dev build (per `CLAUDE.md` gotcha).
 - **Auth email confirmation** — sign-up surfaces a "check your email" message; the actual confirmation/redirect flow is whatever Supabase has configured for the project (no deep-link handler in the app yet).
 - **Browse "Often Bought" chips** — visual only; tap is a no-op TODO. Will wire when receipt history exists.
@@ -122,7 +131,7 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **Admin panel F8 Phase 2 (cont.)** — stores CRUD shipped Session 18a. Still ahead: circular upload + parsing (Claude vision), product-image candidate review, and bulk queue actions.
+1. **Admin panel F8 Phase 2 (cont.)** — stores CRUD + circular ingest shipped (Sessions 18a/b). Still ahead: product-image candidate review, and bulk queue actions on the flagged_items queue.
 2. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
 3. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
 4. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).

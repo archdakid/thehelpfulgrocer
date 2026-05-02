@@ -2,14 +2,17 @@ import Link from 'next/link';
 
 import { signOut } from '@/app/sign-in/actions';
 
+type NavKey = 'queue' | 'stores' | 'circulars';
+
 type Props = {
   email: string;
-  active: 'queue' | 'stores';
+  active: NavKey;
   children: React.ReactNode;
 };
 
-const NAV: Array<{ key: 'queue' | 'stores'; label: string; href: string }> = [
+const NAV: Array<{ key: NavKey; label: string; href: string }> = [
   { key: 'queue', label: 'Review queue', href: '/queue' },
+  { key: 'circulars', label: 'Circulars', href: '/circulars' },
   { key: 'stores', label: 'Stores', href: '/stores' },
 ];
 

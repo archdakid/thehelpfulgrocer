@@ -39,6 +39,163 @@ export type Database = {
   }
   public: {
     Tables: {
+      circular_items: {
+        Row: {
+          amount_minor_units: number
+          brand: string | null
+          circular_id: string
+          contributed_price_id: string | null
+          contributed_product_id: string | null
+          created_at: string
+          id: string
+          match_confidence: number | null
+          matched_product_id: string | null
+          notes: string | null
+          position: number
+          raw_name: string
+          resolved_at: string | null
+          resolved_by: string | null
+          size: string | null
+          status: string
+        }
+        Insert: {
+          amount_minor_units: number
+          brand?: string | null
+          circular_id: string
+          contributed_price_id?: string | null
+          contributed_product_id?: string | null
+          created_at?: string
+          id?: string
+          match_confidence?: number | null
+          matched_product_id?: string | null
+          notes?: string | null
+          position: number
+          raw_name: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          size?: string | null
+          status?: string
+        }
+        Update: {
+          amount_minor_units?: number
+          brand?: string | null
+          circular_id?: string
+          contributed_price_id?: string | null
+          contributed_product_id?: string | null
+          created_at?: string
+          id?: string
+          match_confidence?: number | null
+          matched_product_id?: string | null
+          notes?: string | null
+          position?: number
+          raw_name?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          size?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circular_items_circular_id_fkey"
+            columns: ["circular_id"]
+            isOneToOne: false
+            referencedRelation: "circulars"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circular_items_contributed_price_id_fkey"
+            columns: ["contributed_price_id"]
+            isOneToOne: false
+            referencedRelation: "current_prices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circular_items_contributed_price_id_fkey"
+            columns: ["contributed_price_id"]
+            isOneToOne: false
+            referencedRelation: "prices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circular_items_contributed_product_id_fkey"
+            columns: ["contributed_product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circular_items_matched_product_id_fkey"
+            columns: ["matched_product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circular_items_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circulars: {
+        Row: {
+          created_at: string
+          id: string
+          image_path: string
+          observed_week: string
+          parse_status: string
+          parsed: Json | null
+          process_error: string | null
+          processed_at: string | null
+          store_id: string
+          updated_at: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          image_path: string
+          observed_week: string
+          parse_status?: string
+          parsed?: Json | null
+          process_error?: string | null
+          processed_at?: string | null
+          store_id: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          image_path?: string
+          observed_week?: string
+          parse_status?: string
+          parsed?: Json | null
+          process_error?: string | null
+          processed_at?: string | null
+          store_id?: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circulars_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circulars_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       flagged_items: {
         Row: {
           auto_created_product_id: string | null
