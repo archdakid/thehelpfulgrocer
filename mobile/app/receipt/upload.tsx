@@ -68,7 +68,13 @@ export default function ReceiptUploadScreen() {
       });
       router.replace(`/receipt/${receipt.id}`);
     } catch (err) {
-      logger.error('receipt upload failed', { error: err });
+      logger.error('receipt upload failed', {
+        error: err,
+        errorType: typeof err,
+        errorIsNull: err === null,
+        errorIsUndefined: err === undefined,
+        errorString: err === null ? '<null>' : err === undefined ? '<undefined>' : String(err),
+      });
       Alert.alert('Upload failed', 'Check your connection and try again.');
     }
   };
