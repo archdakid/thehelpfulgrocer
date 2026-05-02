@@ -265,10 +265,7 @@ export function useUploadReceipt() {
       // Generating the receipt id client-side lets us name the storage object
       // before inserting the row, so the insert is the last step and either
       // both (object + row) succeed or we abandon an orphan object.
-      const receiptId =
-        typeof globalThis.crypto?.randomUUID === 'function'
-          ? globalThis.crypto.randomUUID()
-          : await fallbackUuid();
+      const receiptId = generateReceiptId();
       const ext = extensionFor(input.mimeType);
       const path = `${userId}/${receiptId}.${ext}`;
 
@@ -363,12 +360,19 @@ function wrapError(stepLabel: string, cause: unknown): Error {
   return wrapped;
 }
 
-// Fallback for environments without crypto.randomUUID (older Hermes builds).
-async function fallbackUuid(): Promise<string> {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+// Hermes (the JS engine RN uses by default) historically ships without
+// `globalThis.crypto` — neither `randomUUID` nor `getRandomValues` are
+// guaranteed. The previous fallback called getRandomValues unconditionally
+// and crashed on any device where crypto was undefined. Receipt IDs aren't
+// security-sensitive (they're an opaque storage key), so Math.random is
+// adequate — collision odds at our scale are negligible.
+function generateReceiptId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
