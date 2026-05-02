@@ -1,5 +1,6 @@
 import { Check, Plus } from 'lucide-react-native';
 import { Pressable, Text, View } from 'react-native';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import CategoryGlyph from '@/components/ui/CategoryGlyph';
 import { categoryColors } from '@/constants/categories';
@@ -49,7 +50,9 @@ export default function CategoryProductRow({
             {row.name}
           </Text>
           {inList ? (
-            <View
+            <Animated.View
+              entering={FadeIn.duration(180)}
+              exiting={FadeOut.duration(120)}
               className="ml-2 flex-row items-center bg-brand-primary/10 rounded-full px-1.5"
               style={{ paddingVertical: 2, gap: 3 }}
             >
@@ -60,7 +63,7 @@ export default function CategoryProductRow({
               >
                 On list
               </Text>
-            </View>
+            </Animated.View>
           ) : null}
         </View>
         {row.brand ? (

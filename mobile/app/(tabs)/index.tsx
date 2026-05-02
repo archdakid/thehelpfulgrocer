@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { Pencil, Scan, Search, ShoppingBasket } from 'lucide-react-native';
 import { useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import Animated, { FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import CompareStoresSheet, { type StoreTotal } from '@/components/list/CompareStoresSheet';
@@ -164,16 +165,22 @@ export default function HomeScreen() {
   function renderRow(item: ListItem) {
     const info = item.productId ? prices.data?.get(item.productId) : undefined;
     return (
-      <ListItemRow
+      <Animated.View
         key={item.id}
-        item={item}
-        priceInfo={info}
-        onToggle={() => toggleChecked(item.id)}
-        onDelete={() => removeItem(item.id)}
-        onIncrement={() => setQuantity(item.id, item.quantity + 1)}
-        onDecrement={() => setQuantity(item.id, item.quantity - 1)}
-        onOpenProduct={item.productId ? () => router.push(`/product/${item.productId}`) : undefined}
-      />
+        entering={FadeInDown.duration(200)}
+        exiting={FadeOut.duration(150)}
+        layout={LinearTransition.duration(200)}
+      >
+        <ListItemRow
+          item={item}
+          priceInfo={info}
+          onToggle={() => toggleChecked(item.id)}
+          onDelete={() => removeItem(item.id)}
+          onIncrement={() => setQuantity(item.id, item.quantity + 1)}
+          onDecrement={() => setQuantity(item.id, item.quantity - 1)}
+          onOpenProduct={item.productId ? () => router.push(`/product/${item.productId}`) : undefined}
+        />
+      </Animated.View>
     );
   }
 

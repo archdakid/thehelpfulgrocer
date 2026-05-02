@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-01** (end of Session 15a — Browse polish: search + sort).
+Last updated: **2026-05-01** (end of Session 15b — List polish: entrance animations + orphan cleanup).
 
 ---
 
@@ -52,6 +52,11 @@ Last updated: **2026-05-01** (end of Session 15a — Browse polish: search + sor
 - [x] Browse search field opens `/search` (new top-level route): debounced TextInput, `useSearchProducts` results list, tap → product detail
 - [x] Category sort selector replaces the no-op TODO: A→Z, Z→A, Cheapest, Most expensive, Best savings, picked from a Modal sort sheet
 
+### Polish round 15b — List (Session 15b)
+- [x] List rows enter with reanimated `FadeInDown`, exit with `FadeOut`, and reorder under `LinearTransition` — newly added items fade in at the top of "To buy", removed items fade out, neighbours slide smoothly when items move between sections
+- [x] "On list" pill on category-product rows fades in / out so adding from Browse has a visual reward
+- [x] Deleted the orphaned `/store/[id]` route along with its now-dead `useStore` / `useProductsAtStore` hooks, the unused `components/ui/ListItem` primitive, and the matching queryKeys entries
+
 ### Features (per `docs/FEATURES.md`)
 - [x] **F1 — Grocery list** (local-only, AsyncStorage persistence, swipe-delete, qty stepper, sectioned)
 - [x] **F4 — Price comparison popup** (delivered as both product detail and the compare-stores sheet)
@@ -69,7 +74,6 @@ These are working code paths but stub behavior — they render, they don't do th
 - **Auth email confirmation** — sign-up surfaces a "check your email" message; the actual confirmation/redirect flow is whatever Supabase has configured for the project (no deep-link handler in the app yet).
 - **Browse "Often Bought" chips** — visual only; tap is a no-op TODO. Will wire when receipt history exists.
 - **Save TT$X callout in running-total card** — works in at-store mode; hidden in Cheapest mode (correct).
-- **`/store/[id]` screen** — orphaned (no longer reachable from Browse, but the route still works for direct nav).
 
 ---
 
@@ -77,11 +81,11 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **Polish round** — global product search, category filter chips (needs subcategory schema), "Often Bought" wired to receipt history, "On list" entrance animation, no-op TODOs in Browse (search field, sort selector).
-2. **Receipt scanning (F6)** — Storage + Edge Function + ML Kit OCR + matcher. Big.
-3. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
-4. **Admin panel (`admin/`)** — separate Next.js app. F8. Now unblocked: `profiles.is_admin` is the gate.
-5. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
+1. **Receipt scanning (F6)** — Storage + Edge Function + ML Kit OCR + matcher. Big. Highest user-visible value.
+2. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
+3. **Admin panel (`admin/`)** — separate Next.js app. F8. Unblocked: `profiles.is_admin` is the gate.
+4. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
+5. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).
 
 ---
 
@@ -126,7 +130,8 @@ main
                                             └── feature/profiles-table
                                                 └── feature/openfoodfacts
                                                     └── feature/off-image-fallback
-                                                        └── feature/polish-browse  (current)
+                                                        └── feature/polish-browse
+                                                            └── feature/polish-list  (current)
 ```
 
 When ready to consolidate: merge each in order into `main`, or squash-merge groups (foundation → design pass → backend → features).
