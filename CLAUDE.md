@@ -100,6 +100,7 @@ smartshopper/
 
 | If you're working on... | Read first |
 |---|---|
+| What's done, in progress, and next | `docs/STATUS.md` |
 | Database schema, RLS, migrations | `docs/DATA_MODEL.md` |
 | What features exist and which phase | `docs/FEATURES.md` |
 | Tech stack reasoning, folder structure | `docs/ARCHITECTURE.md` |
@@ -107,6 +108,7 @@ smartshopper/
 | Naming conventions, file structure | `docs/CODING_STANDARDS.md` |
 | Why we chose X over Y | `docs/DECISIONS.md` |
 | Big-picture: what we're building and why | `docs/PROJECT_OVERVIEW.md` |
+| In-flight design intent (mockups + notes) | `design/` (start with `design/NOTES.md`) |
 
 ---
 

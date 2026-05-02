@@ -86,16 +86,19 @@ The killer feature. Has to feel magical.
 - Location prompt happens on first scan, not on app launch
 - Denying location does not block any feature
 
-### F6. Receipt scanning (open to all users)
+### F6. Receipt scanning (signed-in users)
+
+> **Phases 1–3 shipped (2026-05-01):** capture + upload (16) → Gemini OCR + line-item extraction (16b) → trigram matching + price contribution + admin queue (16c). Receipts now move through the full pipeline; matched items contribute to the price comparison feature, unmatched-with-metrics auto-create catalog entries, and everything else routes to `flagged_items` for admin review.
+> **Sign-in requirement:** see DECISIONS.md (2026-05-01). The "guest upload" framing in the original spec is deferred.
 
 **User stories:**
-- As a guest or signed-in user, I can capture a photo of my receipt after shopping
-- As a user, I get a confirmation that my contribution is helping the database
-- As a user (signed-in), I can see my receipt history
+- As a signed-in user, I can capture a photo of my receipt after shopping
+- As a user, I can see my receipt history
+- As a user, I get a confirmation that my contribution is helping the database (post-OCR)
 - The system OCRs the receipt and matches line items to products
 
 **Acceptance criteria:**
-- Receipt upload works without authentication
+- Receipt upload requires sign-in (RLS-scoped private storage bucket)
 - OCR runs as Edge Function in <30s
 - Matched items insert into prices table automatically
 - Unmatched items go to admin flagged_items queue
@@ -115,6 +118,8 @@ The killer feature. Has to feel magical.
 - "Nutrition data not available" state is graceful
 
 ### F8. Admin panel — basic
+
+> **Phase 1 shipped (2026-05-02):** `flagged_items` review queue at `admin/` (Next.js 15 + `@supabase/ssr`) — list with reason filters, per-item detail with receipt-image preview, four resolution actions (`confirm` / `correct` / `reject` / `merge`) routed through the `resolve-flagged-item` Edge Function. Phases 2+ (stores CRUD, circulars, image candidates, bulk actions) are still ahead.
 
 The minimum admin needs to keep the app running.
 

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Helpful Grocer — Screens</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, "SF Pro Text", system-ui, sans-serif;
+    background: #ECECE6;
+  }
+  /* Bare iPhone wrapper for canvas (no scaling, fixed 390×844) */
+  .phone {
+    width: 390px; height: 844px;
+    background: var(--bg-canvas);
+    border-radius: 44px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid rgba(0,0,0,0.08);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  /* iOS status bar */
+  .phone::before {
+    content: '9:41';
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 47px; padding: 16px 28px 0;
+    font-size: 15px; font-weight: 600; color: var(--text-primary);
+    z-index: 10; pointer-events: none;
+    display: flex; align-items: flex-start;
+  }
+  /* Right-side status icons */
+  .phone::after {
+    content: '';
+    position: absolute; top: 18px; right: 26px;
+    width: 70px; height: 14px;
+    background-image:
+      radial-gradient(circle at 6px 7px, var(--text-primary) 1.2px, transparent 1.5px),
+      radial-gradient(circle at 12px 7px, var(--text-primary) 1.2px, transparent 1.5px),
+      radial-gradient(circle at 18px 7px, var(--text-primary) 1.2px, transparent 1.5px);
+    z-index: 10; pointer-events: none;
+  }
+  /* Notch */
+  .phone .notch {
+    position: absolute; top: 11px; left: 50%;
+    transform: translateX(-50%);
+    width: 120px; height: 32px; border-radius: 22px;
+    background: #000; z-index: 11; pointer-events: none;
+  }
+  /* Home indicator */
+  .phone .home-ind {
+    position: absolute; left: 50%; bottom: 8px;
+    transform: translateX(-50%);
+    width: 134px; height: 5px; border-radius: 9999px;
+    background: var(--text-primary); opacity: 0.85;
+    z-index: 12; pointer-events: none;
+  }
+  /* Hide ss-scroll scrollbars on canvas */
+  .ss-scroll::-webkit-scrollbar { display: none; }
+  .ss-scroll { scrollbar-width: none; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="categories.jsx"></script>
+<script type="text/babel" src="list-parts.jsx"></script>
+<script type="text/babel" src="grocery-list.jsx"></script>
+<script type="text/babel" src="empty-list.jsx"></script>
+<script type="text/babel" src="compare-sheet.jsx"></script>
+<script type="text/babel" src="scan-found.jsx"></script>
+<script type="text/babel" src="browse-grid.jsx"></script>
+<script type="text/babel" src="browse-detail.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+
+<script type="text/babel">
+  const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "primaryColor": "#0F6E56",
+    "accentColor": "#EF9F27",
+    "canvasColor": "#FAFAF7",
+    "storeDetected": true,
+    "showBestBadges": true,
+    "density": "regular",
+    "phoneScale": 1
+  }/*EDITMODE-END*/;
+
+  const Phone = ({ children, scale }) => (
+    <div className="phone" style={{ transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+      <div className="notch"></div>
+      {children}
+      <div className="home-ind"></div>
+    </div>
+  );
+
+  function App() {
+    const [t, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
+
+    // apply tweak values to CSS vars on the document so all screens pick them up
+    React.useEffect(() => {
+      const r = document.documentElement.style;
+      r.setProperty('--brand-primary', t.primaryColor);
+      r.setProperty('--brand-accent', t.accentColor);
+      r.setProperty('--bg-canvas', t.canvasColor);
+    }, [t.primaryColor, t.accentColor, t.canvasColor]);
+
+    return (
+      <>
+      <window.DesignCanvas>
+        <window.DCSection id="screens" title="The Helpful Grocer"
+          subtitle="iPhone 14 · 390 × 844 · Light mode">
+          <window.DCArtboard id="list" label="01 · Grocery list" width={390} height={844}>
+            <Phone><window.GroceryListScreen /></Phone>
+          </window.DCArtboard>
+          <window.DCArtboard id="empty" label="02 · Empty state" width={390} height={844}>
+            <Phone><window.EmptyListScreen /></Phone>
+          </window.DCArtboard>
+          <window.DCArtboard id="compare" label="03 · Compare stores" width={390} height={844}>
+            <Phone><window.CompareSheetScreen /></Phone>
+          </window.DCArtboard>
+          <window.DCArtboard id="scan" label="04 · Scan & add" width={390} height={844}>
+            <Phone><window.ScanFoundScreen /></Phone>
+          </window.DCArtboard>
+        </window.DCSection>
+        <window.DCSection id="browse" title="Browse tab"
+          subtitle="Category overview · Category detail with prices across stores">
+          <window.DCArtboard id="browse-grid" label="05 · Browse · Categories" width={390} height={844}>
+            <Phone><window.BrowseGridScreen /></Phone>
+          </window.DCArtboard>
+          <window.DCArtboard id="browse-detail" label="06 · Browse · Dairy & eggs" width={390} height={844}>
+            <Phone><window.BrowseDetailScreen /></Phone>
+          </window.DCArtboard>
+        </window.DCSection>
+      </window.DesignCanvas>
+      <window.TweaksPanel title="Tweaks">
+        <window.TweakSection label="Theme" />
+        <window.TweakColor label="Primary" value={t.primaryColor}
+          onChange={(v) => setTweak('primaryColor', v)} />
+        <window.TweakColor label="Accent" value={t.accentColor}
+          onChange={(v) => setTweak('accentColor', v)} />
+        <window.TweakColor label="Canvas" value={t.canvasColor}
+          onChange={(v) => setTweak('canvasColor', v)} />
+        <window.TweakSection label="Behavior" />
+        <window.TweakToggle label="Auto-detect store" value={t.storeDetected}
+          onChange={(v) => setTweak('storeDetected', v)} />
+        <window.TweakToggle label="Show best-price badges" value={t.showBestBadges}
+          onChange={(v) => setTweak('showBestBadges', v)} />
+        <window.TweakRadio label="Density" value={t.density}
+          options={['compact', 'regular', 'comfy']}
+          onChange={(v) => setTweak('density', v)} />
+      </window.TweaksPanel>
+      </>
+    );
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
