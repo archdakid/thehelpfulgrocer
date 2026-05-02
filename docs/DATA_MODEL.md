@@ -322,7 +322,9 @@ CREATE INDEX idx_circulars_status ON circulars(parse_status);
 
 ### `receipts`
 
-User-uploaded receipts — open to anonymous and authenticated users.
+User-uploaded receipts.
+
+> **Phases 1–3 shipped (migrations `0006_receipts.sql`, `0007_receipts_storage.sql`, `0008_receipt_items.sql`, `0009_product_matching.sql`, `0010_flagged_items_and_price_link.sql`, 2026-05-01)** diverge from the spec below: `user_id` is `NOT NULL` (sign-in required — see DECISIONS.md), the image column is `image_path` (not `raw_image_path`), `status` is a typed enum `('uploaded' | 'processing' | 'processed' | 'failed')`, monetary columns are stored as `_minor_units int` (cents), and the parsed store name lives separately in `parsed_store_name` while `store_id` is set only when a fuzzy-match against `stores` succeeds. The OCR-result columns (`ocr_text`, `processed_at`, `process_error`, `parsed_store_name`, `total_amount_minor_units`, `currency`, `receipt_date`) are service-role-only writes; clients can only edit `store_id`, `notes`, `captured_at`. `receipt_items` (line items, service-role-write only) and `flagged_items` (admin queue, admin-only RLS) are live; `product_aliases` exists too. `prices` gained a `receipt_item_id` FK linking each contribution back to its source. The spec below predates the implementation; treat the migrations as authoritative.
 
 ```sql
 CREATE TABLE receipts (
