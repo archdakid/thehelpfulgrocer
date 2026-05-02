@@ -272,13 +272,29 @@ export function useUploadReceipt() {
       const ext = extensionFor(input.mimeType);
       const path = `${userId}/${receiptId}.${ext}`;
 
-      const response = await fetch(input.localUri);
-      const blob = await response.blob();
+      // Read the picker's file:// URI into bytes. RN's fetch() against a
+      // file:// URI is the documented Expo pattern; we re-throw with a
+      // descriptive message so a failure surfaces "fetch failed" rather
+      // than a generic Error in the logs. Known issue on some Android
+      // configs is a 0-byte blob from this path; we guard against that
+      // explicitly below.
+      let blob: Blob;
+      try {
+        const response = await fetch(input.localUri);
+        blob = await response.blob();
+      } catch (err) {
+        throw wrapError('Read picked file failed', err);
+      }
+      if (blob.size === 0) {
+        throw new Error(
+          `Picked file is empty (0 bytes). uri=${input.localUri} mimeType=${input.mimeType}`,
+        );
+      }
 
       const { error: uploadError } = await supabase.storage
         .from('receipts')
         .upload(path, blob, { contentType: input.mimeType, upsert: false });
-      if (uploadError) throw uploadError;
+      if (uploadError) throw wrapError('Storage upload failed', uploadError);
 
       const { data, error } = await supabase
         .from('receipts')
@@ -296,7 +312,7 @@ export function useUploadReceipt() {
         // Insert failed but the bytes are already in storage — clean them up
         // so we don't leak orphan objects on transient errors.
         await supabase.storage.from('receipts').remove([path]);
-        throw error;
+        throw wrapError('Receipt row insert failed', error);
       }
       const receipt = mapReceipt(data as unknown as ReceiptRow);
       kickOffProcessing(receipt.id);
@@ -329,6 +345,22 @@ export function useReprocessReceipt() {
       void qc.invalidateQueries({ queryKey: queryKeys.receiptItems(receiptId) });
     },
   });
+}
+
+// Re-throws an upstream failure with a step-specific prefix while preserving
+// the original error's message and any extra fields (Supabase errors carry
+// `code`, `details`, `hint`, etc.). The logger.ts unwrap pass copies those
+// across automatically.
+function wrapError(stepLabel: string, cause: unknown): Error {
+  const base = cause instanceof Error ? cause : new Error(String(cause));
+  const wrapped = new Error(`${stepLabel}: ${base.message || 'unknown error'}`);
+  for (const key of Object.keys(base)) {
+    if (key === 'message' || key === 'stack') continue;
+    (wrapped as unknown as Record<string, unknown>)[key] = (
+      base as unknown as Record<string, unknown>
+    )[key];
+  }
+  return wrapped;
 }
 
 // Fallback for environments without crypto.randomUUID (older Hermes builds).
