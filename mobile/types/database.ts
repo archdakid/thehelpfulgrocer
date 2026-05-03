@@ -382,6 +382,7 @@ export type Database = {
           category: string | null
           created_at: string
           id: string
+          image_skipped: boolean
           image_url: string | null
           name: string
           upc: string | null
@@ -391,6 +392,7 @@ export type Database = {
           category?: string | null
           created_at?: string
           id?: string
+          image_skipped?: boolean
           image_url?: string | null
           name: string
           upc?: string | null
@@ -400,6 +402,7 @@ export type Database = {
           category?: string | null
           created_at?: string
           id?: string
+          image_skipped?: boolean
           image_url?: string | null
           name?: string
           upc?: string | null

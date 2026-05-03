@@ -40,13 +40,34 @@ export default async function ProductsPage({ searchParams }: Props) {
   const rows = data ?? [];
   const withImage = rows.filter((r) => r.image_url).length;
 
+  // Headcount of products eligible for the image queue (no image, not
+  // skipped, has a UPC). One extra round-trip but cheap thanks to the
+  // partial index from migration 0018.
+  const { count: imageQueueCount } = await supabase
+    .from('products')
+    .select('id', { count: 'exact', head: true })
+    .is('image_url', null)
+    .eq('image_skipped', false)
+    .not('upc', 'is', null);
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Products</h1>
-        <span className="text-sm text-muted">
-          {rows.length} shown{q ? ` for "${q}"` : ''} · {withImage} with admin image
-        </span>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/products/images"
+            className="text-sm border border-border rounded px-2 py-1 hover:bg-bg"
+          >
+            Image queue
+            {imageQueueCount && imageQueueCount > 0 ? (
+              <span className="ml-1.5 text-xs text-muted">{imageQueueCount}</span>
+            ) : null}
+          </Link>
+          <span className="text-sm text-muted">
+            {rows.length} shown{q ? ` for "${q}"` : ''} · {withImage} with admin image
+          </span>
+        </div>
       </div>
 
       <div className="flex flex-col gap-3">

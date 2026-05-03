@@ -229,3 +229,55 @@ export async function setStoreAvailability(input: {
   revalidatePath(`/products/${input.productId}`);
   return { ok: true };
 }
+
+// =============================================================================
+// Product-image candidate review (import-product-image Edge Function).
+// fetchCandidates returns a list of OFF image URLs the admin can pick
+// from; importImage downloads + re-uploads + sets image_url; skipImage
+// removes the product from the queue.
+// =============================================================================
+
+export type ImageCandidate = { kind: string; url: string };
+
+export type FetchCandidatesResult =
+  | { ok: true; candidates: ImageCandidate[]; reason?: string }
+  | { ok: false; error: string };
+
+export async function fetchImageCandidates(
+  productId: string,
+): Promise<FetchCandidatesResult> {
+  const res = await invokeFunction<{
+    candidates?: ImageCandidate[];
+    reason?: string;
+  }>('import-product-image', { action: 'fetchCandidates', productId });
+  if ('error' in res) return { ok: false, error: res.error };
+  return { ok: true, candidates: res.data.candidates ?? [], reason: res.data.reason };
+}
+
+export async function importImageFromUrl(input: {
+  productId: string;
+  sourceUrl: string;
+}): Promise<{ ok: true; imageUrl: string } | { ok: false; error: string }> {
+  const res = await invokeFunction<{ image_url?: string }>(
+    'import-product-image',
+    { action: 'import', productId: input.productId, sourceUrl: input.sourceUrl },
+  );
+  if ('error' in res) return { ok: false, error: res.error };
+  if (!res.data.image_url) return { ok: false, error: 'No image URL returned' };
+  revalidatePath('/products');
+  revalidatePath('/products/images');
+  revalidatePath(`/products/${input.productId}`);
+  return { ok: true, imageUrl: res.data.image_url };
+}
+
+export async function skipProductImage(
+  productId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await invokeFunction<Record<string, unknown>>(
+    'import-product-image',
+    { action: 'skip', productId },
+  );
+  if ('error' in res) return { ok: false, error: res.error };
+  revalidatePath('/products/images');
+  return { ok: true };
+}
