@@ -111,6 +111,9 @@ Last updated: **2026-05-03** (end of Session 18d — admin product CRUD, bulk qu
 - [x] `set-product-image` Edge Function pairs with the per-product `ImageEditor` (admin uploads bytes via storage RLS, function writes the URL with service-role)
 - [x] Migration `0017_product_store_availability.sql`: per-store in/out-of-stock table, separate from `prices` so stock flips don't churn the append-only price history. Absence-of-row defaults to in-stock — the mobile compare-sheet stays backward-compatible
 - [x] Edge Function `manage-price` (`setPrice` / `setAvailability`): manual price entry inserts a `source='manual'` observation; availability upserts on (product_id, store_id). Per-store row on `/products/[id]` shows current price, in/out-of-stock toggle, and a manual entry input
+- [x] Migration `0018_product_image_skipped.sql`: `products.image_skipped` boolean + partial index on the queue filter (`image_url is null and image_skipped = false`)
+- [x] Edge Function `import-product-image` (`fetchCandidates` / `import` / `skip`): OFF candidate fetcher returns per-section image URLs (front, packaging, ingredients, nutrition); import downloads bytes into the `product-images` bucket and points `image_url` at the new URL (so mobile renders without an OFF round-trip and we're insulated from OFF mutating the source); skip flips the new column to suppress requeueing
+- [x] `/products/images` queue: lists products without an admin image and a real UPC, per-row Fetch candidates / Skip / inline candidate gallery with click-to-import. Header link from `/products` shows the queue count
 
 ### Receipts F6 Phase 3 — matcher + price contribution + admin queue (Session 16c)
 - [x] Migration `0009_product_matching.sql`: enables `pg_trgm`, GIN trigram indexes on `lower(products.name)` and `lower(product_aliases.alias)`, new `product_aliases` table with source enum (`admin`/`receipt`/`manual`), and a `match_receipt_text(text)` SQL function returning the single best `(product_id, confidence)` above a 0.30 floor
@@ -134,7 +137,7 @@ Last updated: **2026-05-03** (end of Session 18d — admin product CRUD, bulk qu
 These are working code paths but stub behavior — they render, they don't do the full thing yet.
 
 - **Receipts tab** — Phases 1–3 shipped: upload, OCR, matching, price contribution, and admin queue. Items above 0.50 trigram similarity contribute `source='receipt'` rows to `prices`; below that they sit in the `flagged_items` queue. Unmatched-but-sane items auto-create products and still get queued.
-- **Admin panel F8 Phase 2** — Stores CRUD (18a), circular ingest (18b), flagged-item edits (18c), and product CRUD + bulk queue + per-store prices/availability (18d) all shipped on `feature/admin-phase2-circulars`. Product-image *candidate* review (auto-pulling OFF candidates for admin approval rather than per-product manual upload) is still ahead. `GOOGLE_AI_API_KEY` is already set as a function secret from the receipts pipeline — no new secret needed.
+- **Admin panel F8 Phase 2** — Closed. Stores CRUD (18a), circular ingest (18b), flagged-item edits (18c), product CRUD + bulk queue + per-store prices/availability (18d), and product-image candidate review (18d) all shipped on `feature/admin-phase2-circulars`. `GOOGLE_AI_API_KEY` is already set as a function secret from the receipts pipeline — no new secret needed.
 - **Scan tab** — stub. Real camera flow needs a dev build (per `CLAUDE.md` gotcha).
 - **Auth email confirmation** — sign-up surfaces a "check your email" message; the actual confirmation/redirect flow is whatever Supabase has configured for the project (no deep-link handler in the app yet).
 - **Browse "Often Bought" chips** — visual only; tap is a no-op TODO. Will wire when receipt history exists.
@@ -146,10 +149,9 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **Admin panel F8 Phase 2 (cont.)** — Sessions 18a–d shipped stores CRUD, circular ingest, flagged-item edits, product CRUD, bulk queue actions, and per-store prices/availability. Only product-image *candidate* review (OFF auto-pull queue) remains for the phase to be considered closed.
-2. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
-3. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
-4. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).
+1. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
+2. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
+3. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).
 
 ---
 
