@@ -337,6 +337,45 @@ export type Database = {
           },
         ]
       }
+      product_store_availability: {
+        Row: {
+          is_available: boolean
+          product_id: string
+          store_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          is_available?: boolean
+          product_id: string
+          store_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          is_available?: boolean
+          product_id?: string
+          store_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_store_availability_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_store_availability_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       products: {
         Row: {
           brand: string | null

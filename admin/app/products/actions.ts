@@ -33,7 +33,8 @@ type DeleteResult =
 // Returns the parsed function response or a normalized error string.
 // Discriminated by `data` vs `error` so callers can narrow without
 // optional-property dance.
-async function invokeManageProduct<T>(
+async function invokeFunction<T>(
+  fn: string,
   body: Record<string, unknown>,
 ): Promise<{ data: T } | { error: string }> {
   const supabase = await createSupabaseServerClient();
@@ -43,7 +44,7 @@ async function invokeManageProduct<T>(
   if (!session?.access_token) return { error: 'Not signed in' };
 
   const { data, error } = await supabase.functions.invoke<T & { error?: string }>(
-    'manage-product',
+    fn,
     {
       body,
       headers: { Authorization: `Bearer ${session.access_token}` },
@@ -66,6 +67,9 @@ async function invokeManageProduct<T>(
   if (data.error) return { error: data.error };
   return { data: data as T };
 }
+
+const invokeManageProduct = <T>(body: Record<string, unknown>) =>
+  invokeFunction<T>('manage-product', body);
 
 export async function createProduct(input: {
   name: string;
@@ -181,4 +185,47 @@ export async function setProductImage(
   revalidatePath('/products');
   revalidatePath(`/products/${productId}`);
   return { ok: true, imageUrl: data?.image_url ?? null };
+}
+
+// =============================================================================
+// Manual price entry + per-store availability (manage-price Edge Function).
+// Prices are append-only; setPrice always inserts a new observation row.
+// Availability is upserted on (product_id, store_id).
+// =============================================================================
+
+type SetPriceResult = { ok: true } | { ok: false; error: string };
+type SetAvailabilityResult = { ok: true } | { ok: false; error: string };
+
+export async function setManualPrice(input: {
+  productId: string;
+  storeId: string;
+  amountMinorUnits: number;
+  currency?: string;
+}): Promise<SetPriceResult> {
+  const res = await invokeFunction<Record<string, unknown>>('manage-price', {
+    action: 'setPrice',
+    productId: input.productId,
+    storeId: input.storeId,
+    amountMinorUnits: input.amountMinorUnits,
+    currency: input.currency,
+  });
+  if ('error' in res) return { ok: false, error: res.error };
+  revalidatePath(`/products/${input.productId}`);
+  return { ok: true };
+}
+
+export async function setStoreAvailability(input: {
+  productId: string;
+  storeId: string;
+  isAvailable: boolean;
+}): Promise<SetAvailabilityResult> {
+  const res = await invokeFunction<Record<string, unknown>>('manage-price', {
+    action: 'setAvailability',
+    productId: input.productId,
+    storeId: input.storeId,
+    isAvailable: input.isAvailable,
+  });
+  if ('error' in res) return { ok: false, error: res.error };
+  revalidatePath(`/products/${input.productId}`);
+  return { ok: true };
 }
