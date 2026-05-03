@@ -20,6 +20,16 @@ type CreateResult =
 
 type UpdateResult = { ok: true } | { ok: false; error: string };
 
+export type DeleteCounts = { prices: number; aliases: number };
+
+type PreviewDeleteResult =
+  | { ok: true; counts: DeleteCounts }
+  | { ok: false; error: string };
+
+type DeleteResult =
+  | { ok: true; counts: DeleteCounts }
+  | { ok: false; error: string };
+
 // Returns the parsed function response or a normalized error string.
 // Discriminated by `data` vs `error` so callers can narrow without
 // optional-property dance.
@@ -99,6 +109,33 @@ export async function updateProduct(
   revalidatePath('/products');
   revalidatePath(`/products/${productId}`);
   return { ok: true };
+}
+
+// Two-phase delete to keep the destructive confirm honest. The first
+// call returns counts of cascaded rows (prices, aliases) so the UI can
+// show "this will wipe N price observations" before the admin commits.
+export async function previewDeleteProduct(
+  productId: string,
+): Promise<PreviewDeleteResult> {
+  const res = await invokeManageProduct<{
+    counts?: DeleteCounts;
+  }>({ action: 'delete', productId, confirm: false });
+  if ('error' in res) return { ok: false, error: res.error };
+  if (!res.data.counts) return { ok: false, error: 'No counts in response' };
+  return { ok: true, counts: res.data.counts };
+}
+
+export async function deleteProduct(
+  productId: string,
+): Promise<DeleteResult> {
+  const res = await invokeManageProduct<{
+    counts?: DeleteCounts;
+  }>({ action: 'delete', productId, confirm: true });
+  if ('error' in res) return { ok: false, error: res.error };
+
+  revalidatePath('/products');
+  revalidatePath(`/products/${productId}`);
+  return { ok: true, counts: res.data.counts ?? { prices: 0, aliases: 0 } };
 }
 
 // Sets or clears products.image_url. The client uploaded the bytes

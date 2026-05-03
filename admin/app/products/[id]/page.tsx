@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import DeleteSection from './DeleteSection';
 import DetailsEditor from './DetailsEditor';
 import ImageEditor from './ImageEditor';
 
@@ -54,6 +55,8 @@ export default async function ProductDetailPage({ params }: Props) {
         productName={data.name}
         upc={data.upc}
       />
+
+      <DeleteSection productId={data.id} productName={data.name} />
     </div>
   );
 }

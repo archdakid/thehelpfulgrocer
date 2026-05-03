@@ -4,9 +4,11 @@
 // `set-product-image` because that flow has its own storage cleanup
 // concerns; this function handles only the relational fields.
 //
-// Two actions:
+// Three actions:
 //   - create  { name, brand?, upc?, category? }  → insert, returns row
 //   - update  { productId, fields: { name?, brand?, upc?, category? } } → patch
+//   - delete  { productId, confirm: boolean } → preview counts (confirm=false)
+//             or actually delete (confirm=true)
 //
 // Encoding for nullable fields on update:
 //   - field absent / undefined → leave alone
@@ -14,6 +16,16 @@
 //   - field === string         → set
 // `name` cannot be null (NOT NULL on the column); we reject the clear
 // attempt rather than letting Postgres throw.
+//
+// Delete cascade behavior (from migrations 0001/0009/0010/0014/0008):
+//   - prices.product_id              → CASCADE (deleted)
+//   - product_aliases.product_id     → CASCADE (deleted)
+//   - receipt_items.matched_product_id   → SET NULL (preserved)
+//   - circular_items.matched_product_id  → SET NULL (preserved)
+//   - circular_items.contributed_product_id → SET NULL (preserved)
+//   - flagged_items.auto_created_product_id → SET NULL (preserved)
+// Storage objects under product-images/{productId}/* are cleaned up
+// best-effort post-delete; orphans aren't fatal.
 
 // deno-lint-ignore-file no-explicit-any
 
@@ -43,7 +55,7 @@ const CATEGORIES = new Set([
   'snacks',
 ]);
 
-type Action = 'create' | 'update';
+type Action = 'create' | 'update' | 'delete';
 
 type Payload = {
   action?: unknown;
@@ -53,7 +65,10 @@ type Payload = {
   upc?: unknown;
   category?: unknown;
   fields?: unknown;
+  confirm?: unknown;
 };
+
+const BUCKET = 'product-images';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -63,7 +78,7 @@ Deno.serve(async (req) => {
   try {
     const body = (await req.json().catch(() => null)) as Payload | null;
     const action = body?.action as Action | undefined;
-    if (!action || !['create', 'update'].includes(action)) {
+    if (!action || !['create', 'update', 'delete'].includes(action)) {
       return jsonError(400, 'Invalid action');
     }
 
@@ -103,9 +118,15 @@ Deno.serve(async (req) => {
       return await createProduct(admin, { name, brand, upc, category });
     }
 
-    // update
     const productId = typeof body?.productId === 'string' ? body.productId : null;
     if (!productId) return jsonError(400, 'productId is required');
+
+    if (action === 'delete') {
+      const confirm = body?.confirm === true;
+      return await deleteProduct(admin, productId, confirm);
+    }
+
+    // update
     const fieldsRaw = body?.fields;
     if (!fieldsRaw || typeof fieldsRaw !== 'object') {
       return jsonError(400, 'fields object is required');
@@ -255,6 +276,102 @@ async function updateProduct(
   }
   if (!data) return jsonError(404, 'Product not found');
   return jsonOk({ ok: true, product: data });
+}
+
+// Two-phase: confirm=false returns counts only (so the admin UI can show
+// "this will delete N prices, M aliases — continue?"); confirm=true does
+// the delete after re-counting. We re-count under confirm rather than
+// trusting whatever the UI saw, because price observations may have
+// arrived between preview and confirm — the admin should see the actual
+// final tally in the response.
+async function deleteProduct(
+  admin: SupabaseClient,
+  productId: string,
+  confirm: boolean,
+) {
+  const { data: product, error: readErr } = await admin
+    .from('products')
+    .select('id, name, image_url')
+    .eq('id', productId)
+    .maybeSingle();
+  if (readErr) return jsonError(500, readErr.message);
+  if (!product) return jsonError(404, 'Product not found');
+
+  const counts = await countDependents(admin, productId);
+  if ('error' in counts) return jsonError(500, counts.error);
+
+  if (!confirm) {
+    return jsonOk({
+      ok: true,
+      preview: true,
+      product: { id: product.id, name: product.name },
+      counts: counts.value,
+    });
+  }
+
+  // Delete the row. Cascades wipe prices + aliases; SET NULL on
+  // receipt_items / circular_items / flagged_items preserves audit.
+  const { error: delErr } = await (admin.from('products') as any)
+    .delete()
+    .eq('id', productId);
+  if (delErr) return jsonError(500, delErr.message);
+
+  // Best-effort storage cleanup — list and remove anything under the
+  // product's prefix. Failure here is logged but not fatal: the row is
+  // gone, so the orphan blob is just bucket lint.
+  await cleanupProductImages(admin, productId);
+
+  return jsonOk({
+    ok: true,
+    deleted: true,
+    product: { id: product.id, name: product.name },
+    counts: counts.value,
+  });
+}
+
+async function countDependents(
+  admin: SupabaseClient,
+  productId: string,
+): Promise<
+  | { value: { prices: number; aliases: number } }
+  | { error: string }
+> {
+  const [pricesRes, aliasesRes] = await Promise.all([
+    (admin.from('prices') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('product_id', productId),
+    (admin.from('product_aliases') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('product_id', productId),
+  ]);
+  if (pricesRes.error) return { error: `prices count: ${pricesRes.error.message}` };
+  if (aliasesRes.error) return { error: `aliases count: ${aliasesRes.error.message}` };
+  return {
+    value: {
+      prices: pricesRes.count ?? 0,
+      aliases: aliasesRes.count ?? 0,
+    },
+  };
+}
+
+async function cleanupProductImages(admin: SupabaseClient, productId: string) {
+  const { data, error } = await admin.storage.from(BUCKET).list(productId);
+  if (error) {
+    console.warn('Image list failed during product delete', {
+      productId,
+      error: error.message,
+    });
+    return;
+  }
+  if (!data || data.length === 0) return;
+  const paths = data.map((f) => `${productId}/${f.name}`);
+  const { error: rmErr } = await admin.storage.from(BUCKET).remove(paths);
+  if (rmErr) {
+    console.warn('Image cleanup failed during product delete', {
+      productId,
+      error: rmErr.message,
+    });
+  }
 }
 
 function jsonOk(payload: Record<string, unknown>): Response {
