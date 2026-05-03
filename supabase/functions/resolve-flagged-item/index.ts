@@ -34,23 +34,41 @@ type Action = 'confirm' | 'correct' | 'reject' | 'merge';
 type Resolution = 'confirmed' | 'corrected' | 'rejected' | 'merged';
 
 // Optional per-resolve edits the admin can apply alongside the action.
-// `productName` only applies to `auto_created_product` (we own that row).
-// `lineTotalMinorUnits` and `unitPriceMinorUnits` apply on any path that
-// contributes or updates a price — Gemini occasionally misreads totals,
-// and admins also legitimately need to fix sale prices that came in
-// transcribed wrong. Sale handling falls out for free: the contributed
-// price's `observed_at` already captures *when*, so a sale-priced
-// observation is just a normal price point dated to the receipt.
+// `productName`, `brand`, and `category` only apply to
+// `auto_created_product` (we own that row — editing canonical catalog
+// rows would have catalog-wide side effects). `lineTotalMinorUnits`
+// and `unitPriceMinorUnits` apply on any path that contributes or
+// updates a price — Gemini occasionally misreads totals, and admins
+// also legitimately need to fix sale prices that came in transcribed
+// wrong. Sale handling falls out for free: the contributed price's
+// `observed_at` already captures *when*, so a sale-priced observation
+// is just a normal price point dated to the receipt.
 //
-// Encoding: keys absent or undefined → leave alone. unitPriceMinorUnits
-// = null → explicitly clear. We can't differentiate "absent" from
+// Encoding: keys absent or undefined → leave alone. null on a nullable
+// field → explicitly clear. We can't differentiate "absent" from
 // "explicit null" for lineTotalMinorUnits because it can't be null
 // (column is NOT NULL).
 type Edits = {
   productName?: string;
+  brand?: string | null;
+  category?: string | null;
   lineTotalMinorUnits?: number;
   unitPriceMinorUnits?: number | null;
 };
+
+// Mirrors the CHECK constraint on products.category (migration 0004) and
+// the manage-product Edge Function's allow-list. Drift here means valid
+// admin edits get rejected, not bad data lands.
+const CATEGORIES = new Set([
+  'produce',
+  'dairy',
+  'meat',
+  'bakery',
+  'pantry',
+  'frozen',
+  'beverage',
+  'snacks',
+]);
 
 type Payload = {
   flaggedItemId?: unknown;
@@ -365,6 +383,21 @@ function parseEdits(value: unknown): Edits {
   const v = value as Record<string, unknown>;
   const out: Edits = {};
   if (typeof v.productName === 'string') out.productName = v.productName;
+  // brand + category are nullable. `null` = explicit clear, string = set,
+  // anything else = leave alone. Empty string is treated as null so the
+  // UI's "blank input means clear" behavior round-trips cleanly.
+  if (v.brand === null) {
+    out.brand = null;
+  } else if (typeof v.brand === 'string') {
+    const t = v.brand.trim();
+    out.brand = t === '' ? null : t;
+  }
+  if (v.category === null) {
+    out.category = null;
+  } else if (typeof v.category === 'string') {
+    const t = v.category.trim().toLowerCase();
+    out.category = t === '' ? null : t;
+  }
   if (typeof v.lineTotalMinorUnits === 'number') {
     out.lineTotalMinorUnits = v.lineTotalMinorUnits;
   }
@@ -383,24 +416,48 @@ async function applyEdits(
   flag: any,
   reason: Reason,
 ): Promise<void> {
-  // 1. Product name. Only auto-created products can be renamed here —
-  // matched/canonical products are shared catalog rows and editing them
-  // from a receipt context would have catalog-wide side effects.
+  // 1. Product fields (name / brand / category). Only auto-created
+  // products can be edited here — matched/canonical products are shared
+  // catalog rows and editing them from a receipt context would have
+  // catalog-wide side effects. We bundle the three writes into one
+  // UPDATE so the row only ticks once.
+  const productPatch: Record<string, unknown> = {};
   if (edits.productName !== undefined) {
     if (reason !== 'auto_created_product') {
       throw new Error('Product name edits only allowed for auto_created_product');
     }
-    if (!flag.auto_created_product_id) {
-      throw new Error('No auto-created product to rename');
-    }
     const trimmed = edits.productName.trim();
     if (trimmed.length === 0) throw new Error('Product name cannot be empty');
     if (trimmed.length > 200) throw new Error('Product name too long (max 200)');
+    productPatch.name = trimmed;
+  }
+  if (edits.brand !== undefined) {
+    if (reason !== 'auto_created_product') {
+      throw new Error('Brand edits only allowed for auto_created_product');
+    }
+    if (edits.brand !== null && edits.brand.length > 100) {
+      throw new Error('Brand too long (max 100)');
+    }
+    productPatch.brand = edits.brand;
+  }
+  if (edits.category !== undefined) {
+    if (reason !== 'auto_created_product') {
+      throw new Error('Category edits only allowed for auto_created_product');
+    }
+    if (edits.category !== null && !CATEGORIES.has(edits.category)) {
+      throw new Error(`category must be one of: ${[...CATEGORIES].join(', ')}`);
+    }
+    productPatch.category = edits.category;
+  }
+  if (Object.keys(productPatch).length > 0) {
+    if (!flag.auto_created_product_id) {
+      throw new Error('No auto-created product to edit');
+    }
     const { error } = await admin
       .from('products')
-      .update({ name: trimmed })
+      .update(productPatch)
       .eq('id', flag.auto_created_product_id);
-    if (error) throw new Error(`Update product name failed: ${error.message}`);
+    if (error) throw new Error(`Update product failed: ${error.message}`);
   }
 
   // 2. Line total / unit price on the receipt_item. Mutate the in-memory

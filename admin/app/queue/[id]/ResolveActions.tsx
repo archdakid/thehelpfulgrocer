@@ -13,11 +13,35 @@ type Props = {
   reason: Reason;
   currentProductId: string | null;
   currentProductName: string | null;
+  currentProductBrand: string | null;
+  currentProductCategory: string | null;
   currentLineTotalMinorUnits: number;
   currentUnitPriceMinorUnits: number | null;
   currency: string;
   resolved: boolean;
 };
+
+// Mirrors migration 0004's CHECK constraint and the manage-product /
+// resolve-flagged-item allow-lists. Kept inline because Resolve is the
+// only consumer of the dropdown in this file.
+const PRODUCT_CATEGORIES = [
+  'produce',
+  'dairy',
+  'meat',
+  'bakery',
+  'pantry',
+  'frozen',
+  'beverage',
+  'snacks',
+] as const;
+type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
+
+function asCategory(raw: string | null): ProductCategory | '' {
+  if (!raw) return '';
+  return PRODUCT_CATEGORIES.includes(raw as ProductCategory)
+    ? (raw as ProductCategory)
+    : '';
+}
 
 type ProductHit = { id: string; name: string; brand: string | null };
 
@@ -41,6 +65,8 @@ export default function ResolveActions({
   reason,
   currentProductId,
   currentProductName,
+  currentProductBrand,
+  currentProductCategory,
   currentLineTotalMinorUnits,
   currentUnitPriceMinorUnits,
   currency,
@@ -59,6 +85,10 @@ export default function ResolveActions({
   // scratch. We diff against the originals at submit time and only send
   // the fields that actually changed.
   const [nameInput, setNameInput] = useState(currentProductName ?? '');
+  const [brandInput, setBrandInput] = useState(currentProductBrand ?? '');
+  const [categoryInput, setCategoryInput] = useState<ProductCategory | ''>(
+    asCategory(currentProductCategory),
+  );
   const [lineTotalInput, setLineTotalInput] = useState(
     minorToDecimal(currentLineTotalMinorUnits),
   );
@@ -105,6 +135,17 @@ export default function ResolveActions({
       const trimmed = nameInput.trim();
       if (trimmed && trimmed !== currentProductName) {
         edits.productName = trimmed;
+      }
+      // Brand: empty input → null (clear), non-empty → set if changed.
+      const trimmedBrand = brandInput.trim();
+      const initialBrand = currentProductBrand ?? '';
+      if (trimmedBrand !== initialBrand) {
+        edits.brand = trimmedBrand === '' ? null : trimmedBrand;
+      }
+      // Category: '' → null (clear), valid value → set if changed.
+      const initialCategory = asCategory(currentProductCategory);
+      if (categoryInput !== initialCategory) {
+        edits.category = categoryInput === '' ? null : categoryInput;
       }
     }
 
@@ -178,15 +219,44 @@ export default function ResolveActions({
           Review &amp; correct
         </h3>
         {reason === 'auto_created_product' && currentProductName != null ? (
-          <label className="block text-sm">
-            <span className="text-muted">Product name</span>
-            <input
-              value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
-              maxLength={200}
-              className="mt-1 w-full border border-border rounded px-3 py-2 bg-bg focus:outline-none focus:ring-2 focus:ring-accent text-sm"
-            />
-          </label>
+          <>
+            <label className="block text-sm">
+              <span className="text-muted">Product name</span>
+              <input
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                maxLength={200}
+                className="mt-1 w-full border border-border rounded px-3 py-2 bg-bg focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-sm">
+                <span className="text-muted">Brand</span>
+                <input
+                  value={brandInput}
+                  onChange={(e) => setBrandInput(e.target.value)}
+                  maxLength={100}
+                  placeholder="—"
+                  className="mt-1 w-full border border-border rounded px-3 py-2 bg-bg focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="text-muted">Category</span>
+                <select
+                  value={categoryInput}
+                  onChange={(e) => setCategoryInput(e.target.value as ProductCategory | '')}
+                  className="mt-1 w-full border border-border rounded px-3 py-2 bg-bg focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+                >
+                  <option value="">— uncategorized —</option>
+                  {PRODUCT_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </>
         ) : null}
         <div className="grid grid-cols-2 gap-3">
           <label className="block text-sm">

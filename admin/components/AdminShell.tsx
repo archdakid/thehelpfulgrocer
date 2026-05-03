@@ -2,7 +2,7 @@ import Link from 'next/link';
 
 import { signOut } from '@/app/sign-in/actions';
 
-type NavKey = 'queue' | 'stores' | 'circulars';
+type NavKey = 'queue' | 'stores' | 'circulars' | 'products';
 
 type Props = {
   email: string;
@@ -13,6 +13,7 @@ type Props = {
 const NAV: Array<{ key: NavKey; label: string; href: string }> = [
   { key: 'queue', label: 'Review queue', href: '/queue' },
   { key: 'circulars', label: 'Circulars', href: '/circulars' },
+  { key: 'products', label: 'Products', href: '/products' },
   { key: 'stores', label: 'Stores', href: '/stores' },
 ];
 
