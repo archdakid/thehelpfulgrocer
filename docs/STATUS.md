@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-02** (end of Session 18b — F8 Phase 2 part 2: admin circular ingest pipeline).
+Last updated: **2026-05-02** (end of Session 18c — admin flagged-item edits + receipt pipeline reliability).
 
 ---
 
@@ -97,6 +97,12 @@ Last updated: **2026-05-02** (end of Session 18b — F8 Phase 2 part 2: admin ci
 - [x] `success` color token added to `tailwind.config.js`
 - [x] Decision logged: stick with Gemini 2.5 Flash for circulars (cost; one vendor; admin reviews every row anyway)
 
+### Admin F8 Phase 2c — flagged-item edits + receipt reliability (Session 18c)
+- [x] `resolve-flagged-item` Edge Function accepts an optional `edits` payload: `productName` (auto-created products only), `lineTotalMinorUnits`, `unitPriceMinorUnits` (`null` = explicit clear). Edits mutate the receipt_item before the contribute/merge branches run, and the `auto_created_product` confirm path syncs the existing `prices` row to match. Reject silently drops edits — committing partial changes alongside a discarded resolution would leak into nowhere
+- [x] `/queue/[id]` resolve form pre-populates name + line total + unit price, diffs against originals, sends only changed fields. Product-name input only renders for `auto_created_product` (the Edge Function rejects renames on canonical matches)
+- [x] Mobile receipt upload reliability: UUID fallback when `crypto.randomUUID` is unavailable (Hermes), `wrapError` preserves Supabase plain-object errors instead of stringifying to `[object Object]`, `useReceiptItems` invalidates when status flips to `processed` (was rendering a stale empty list)
+- [x] Migration `0015_receipts_grant_id_insert.sql`: `grant insert (id) on receipts to authenticated` so the client-generated UUID upload path actually lands
+
 ### Receipts F6 Phase 3 — matcher + price contribution + admin queue (Session 16c)
 - [x] Migration `0009_product_matching.sql`: enables `pg_trgm`, GIN trigram indexes on `lower(products.name)` and `lower(product_aliases.alias)`, new `product_aliases` table with source enum (`admin`/`receipt`/`manual`), and a `match_receipt_text(text)` SQL function returning the single best `(product_id, confidence)` above a 0.30 floor
 - [x] Migration `0010_flagged_items_and_price_link.sql`: `flagged_items` admin queue (reasons `unmatched` / `low_confidence` / `auto_created_product`, resolutions `confirmed` / `corrected` / `rejected` / `merged`, admin-only RLS), `prices.receipt_item_id` FK so contributed prices trace back to the line item that produced them
@@ -119,7 +125,7 @@ Last updated: **2026-05-02** (end of Session 18b — F8 Phase 2 part 2: admin ci
 These are working code paths but stub behavior — they render, they don't do the full thing yet.
 
 - **Receipts tab** — Phases 1–3 shipped: upload, OCR, matching, price contribution, and admin queue. Items above 0.50 trigram similarity contribute `source='receipt'` rows to `prices`; below that they sit in the `flagged_items` queue. Unmatched-but-sane items auto-create products and still get queued.
-- **Admin panel F8 Phase 2** — Stores CRUD shipped (Session 18a). Circular ingest (upload → Gemini vision parse → admin review → price contribution) shipped (Session 18b). Product-image candidate review and bulk queue actions are still ahead. `GOOGLE_AI_API_KEY` is already set as a function secret from the receipts pipeline — no new secret needed.
+- **Admin panel F8 Phase 2** — Stores CRUD shipped (Session 18a). Circular ingest (upload → Gemini vision parse → admin review → price contribution) shipped (Session 18b). Editable resolve form (name + line total + unit price corrections) shipped (Session 18c). Product-image candidate review and bulk queue actions are still ahead. `GOOGLE_AI_API_KEY` is already set as a function secret from the receipts pipeline — no new secret needed.
 - **Scan tab** — stub. Real camera flow needs a dev build (per `CLAUDE.md` gotcha).
 - **Auth email confirmation** — sign-up surfaces a "check your email" message; the actual confirmation/redirect flow is whatever Supabase has configured for the project (no deep-link handler in the app yet).
 - **Browse "Often Bought" chips** — visual only; tap is a no-op TODO. Will wire when receipt history exists.

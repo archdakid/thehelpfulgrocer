@@ -1,7 +1,8 @@
 import Link from 'next/link';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { formatMoney, reasonLabel, reasonTone } from '@/lib/format';
+import { reasonLabel } from '@/lib/format';
+import QueueList, { type QueueRow } from './QueueList';
 
 type Props = {
   searchParams: Promise<{ reason?: string }>;
@@ -72,10 +73,10 @@ export default async function QueueListPage({ searchParams }: Props) {
     );
   }
 
-  const rows = data ?? [];
+  const rows = (data ?? []) as unknown as QueueRow[];
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-24">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Review queue</h1>
         <span className="text-sm text-muted">
@@ -103,53 +104,7 @@ export default async function QueueListPage({ searchParams }: Props) {
         })}
       </nav>
 
-      {rows.length === 0 ? (
-        <div className="bg-surface border border-border rounded-lg p-10 text-center">
-          <p className="text-text font-medium">Queue is clear.</p>
-          <p className="text-sm text-muted mt-1">
-            Nothing matches this filter. Receipts that need review will land here as they
-            come in.
-          </p>
-        </div>
-      ) : (
-        <ul className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-          {rows.map((row) => {
-            const item = row.receipt_item;
-            const receipt = item?.receipt;
-            const store = receipt?.store?.name ?? 'Unknown store';
-            const matched =
-              row.auto_created_product?.name ?? item?.matched_product?.name ?? null;
-            const tone = reasonTone(row.reason);
-
-            return (
-              <li key={row.id} className="hover:bg-bg">
-                <Link href={`/queue/${row.id}`} className="block px-4 py-3">
-                  <div className="flex items-start gap-3">
-                    <span
-                      className={`inline-block text-[11px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded ${tone}`}
-                    >
-                      {reasonLabel(row.reason)}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{item?.raw_text}</p>
-                      <p className="text-xs text-muted mt-0.5 truncate">
-                        {store}
-                        {matched ? ` · matched: ${matched}` : ''}
-                        {item?.match_confidence != null
-                          ? ` · score ${item.match_confidence.toFixed(2)}`
-                          : ''}
-                      </p>
-                    </div>
-                    <div className="text-sm tabular-nums text-text shrink-0">
-                      {formatMoney(item?.line_total_minor_units ?? 0, receipt?.currency ?? 'TTD')}
-                    </div>
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <QueueList rows={rows} />
     </div>
   );
 }
