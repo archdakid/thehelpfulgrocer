@@ -6,11 +6,24 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 type ResolveAction = 'confirm' | 'correct' | 'reject' | 'merge';
 
+// Mirror of the Edge Function's Edits shape. `null` on a nullable field
+// means "explicitly clear it"; absence means "leave alone." Brand and
+// category are scoped to `auto_created_product` reason on the server,
+// same as productName.
+export type ResolveEdits = {
+  productName?: string;
+  brand?: string | null;
+  category?: string | null;
+  lineTotalMinorUnits?: number;
+  unitPriceMinorUnits?: number | null;
+};
+
 type ResolvePayload = {
   flaggedItemId: string;
   action: ResolveAction;
   targetProductId?: string | null;
   notes?: string | null;
+  edits?: ResolveEdits;
 };
 
 export async function resolveFlaggedItem(

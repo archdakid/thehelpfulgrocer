@@ -26,7 +26,7 @@ export default async function QueueDetailPage({ params }: Props) {
         created_at,
         auto_created_product_id,
         auto_created_product:products!flagged_items_auto_created_product_id_fkey (
-          id, name, brand, image_url
+          id, name, brand, category, image_url
         ),
         receipt_item:receipt_items!inner (
           id,
@@ -174,6 +174,12 @@ export default async function QueueDetailPage({ params }: Props) {
             flaggedItemId={flag.id}
             reason={flag.reason as 'unmatched' | 'low_confidence' | 'auto_created_product'}
             currentProductId={matchedProduct?.id ?? autoProduct?.id ?? null}
+            currentProductName={autoProduct?.name ?? null}
+            currentProductBrand={autoProduct?.brand ?? null}
+            currentProductCategory={autoProduct?.category ?? null}
+            currentLineTotalMinorUnits={item.line_total_minor_units}
+            currentUnitPriceMinorUnits={item.unit_price_minor_units}
+            currency={receipt.currency ?? 'TTD'}
             resolved={Boolean(flag.resolved_at)}
           />
         </div>

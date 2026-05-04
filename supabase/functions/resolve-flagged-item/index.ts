@@ -33,11 +33,49 @@ type Reason = 'unmatched' | 'low_confidence' | 'auto_created_product';
 type Action = 'confirm' | 'correct' | 'reject' | 'merge';
 type Resolution = 'confirmed' | 'corrected' | 'rejected' | 'merged';
 
+// Optional per-resolve edits the admin can apply alongside the action.
+// `productName`, `brand`, and `category` only apply to
+// `auto_created_product` (we own that row — editing canonical catalog
+// rows would have catalog-wide side effects). `lineTotalMinorUnits`
+// and `unitPriceMinorUnits` apply on any path that contributes or
+// updates a price — Gemini occasionally misreads totals, and admins
+// also legitimately need to fix sale prices that came in transcribed
+// wrong. Sale handling falls out for free: the contributed price's
+// `observed_at` already captures *when*, so a sale-priced observation
+// is just a normal price point dated to the receipt.
+//
+// Encoding: keys absent or undefined → leave alone. null on a nullable
+// field → explicitly clear. We can't differentiate "absent" from
+// "explicit null" for lineTotalMinorUnits because it can't be null
+// (column is NOT NULL).
+type Edits = {
+  productName?: string;
+  brand?: string | null;
+  category?: string | null;
+  lineTotalMinorUnits?: number;
+  unitPriceMinorUnits?: number | null;
+};
+
+// Mirrors the CHECK constraint on products.category (migration 0004) and
+// the manage-product Edge Function's allow-list. Drift here means valid
+// admin edits get rejected, not bad data lands.
+const CATEGORIES = new Set([
+  'produce',
+  'dairy',
+  'meat',
+  'bakery',
+  'pantry',
+  'frozen',
+  'beverage',
+  'snacks',
+]);
+
 type Payload = {
   flaggedItemId?: unknown;
   action?: unknown;
   targetProductId?: unknown;
   notes?: unknown;
+  edits?: unknown;
 };
 
 Deno.serve(async (req) => {
@@ -52,6 +90,7 @@ Deno.serve(async (req) => {
     const targetProductId =
       typeof body?.targetProductId === 'string' ? body.targetProductId : null;
     const notes = typeof body?.notes === 'string' ? body.notes : null;
+    const edits = parseEdits(body?.edits);
 
     if (!flaggedItemId) return jsonError(400, 'Missing flaggedItemId');
     if (!action || !['confirm', 'correct', 'reject', 'merge'].includes(action)) {
@@ -96,6 +135,7 @@ Deno.serve(async (req) => {
       action,
       targetProductId,
       notes,
+      edits,
       resolvedBy: adminId,
     });
     return jsonOk(result);
@@ -111,6 +151,7 @@ type ResolveCtx = {
   action: Action;
   targetProductId: string | null;
   notes: string | null;
+  edits: Edits;
   resolvedBy: string;
 };
 
@@ -150,6 +191,15 @@ async function resolve(admin: SupabaseClient, ctx: ResolveCtx) {
     throw new Error(`${ctx.action} requires targetProductId`);
   }
 
+  // Apply admin edits (name / price corrections) before the action branches
+  // run. We mutate `item` in place so downstream contributePrice / merge
+  // logic sees the edited values and writes them through. Reject doesn't
+  // contribute or keep anything, so editing alongside reject is meaningless
+  // — skip to avoid surprise side effects on the receipt_item row.
+  if (ctx.action !== 'reject') {
+    await applyEdits(admin, ctx.edits, item, flag, reason);
+  }
+
   let resolution: Resolution;
 
   if (ctx.action === 'confirm') {
@@ -166,9 +216,21 @@ async function resolve(admin: SupabaseClient, ctx: ResolveCtx) {
       await (admin.from('receipt_items') as any)
         .update({ needs_review: false, match_confidence: item.match_confidence })
         .eq('id', item.id);
+    } else if (reason === 'auto_created_product') {
+      // The OCR pass already contributed a price for the auto-created
+      // product. If the admin edited the line total / unit price, sync
+      // the existing prices row to match. The update is idempotent when
+      // nothing changed — no-op write of the same amount.
+      const productId = flag.auto_created_product_id as string | null;
+      const newAmount = computePriceAmount(item);
+      if (productId && newAmount != null) {
+        const { error: priceErr } = await (admin.from('prices') as any)
+          .update({ amount_minor_units: newAmount })
+          .eq('receipt_item_id', item.id)
+          .eq('product_id', productId);
+        if (priceErr) throw new Error(`Sync price failed: ${priceErr.message}`);
+      }
     }
-    // auto_created_product: nothing to write — price was contributed at
-    // OCR time, the product is real, just resolve.
     resolution = 'confirmed';
   } else if (ctx.action === 'correct') {
     // Reassign the receipt_item to the admin-picked product. Contribute a
@@ -192,8 +254,14 @@ async function resolve(admin: SupabaseClient, ctx: ResolveCtx) {
     const autoProduct = flag.auto_created_product_id as string | null;
     if (!autoProduct) throw new Error('auto_created_product flag has no product id');
 
+    // Reassign the contributed price to the merge target. If the admin
+    // also edited the amount, fold that into the same UPDATE so the
+    // observation reflects the corrected value on the right product.
+    const priceUpdate: Record<string, unknown> = { product_id: target };
+    const newAmount = computePriceAmount(item);
+    if (newAmount != null) priceUpdate.amount_minor_units = newAmount;
     await (admin.from('prices') as any)
-      .update({ product_id: target })
+      .update(priceUpdate)
       .eq('receipt_item_id', item.id)
       .eq('product_id', autoProduct);
 
@@ -267,15 +335,8 @@ async function contributePrice(
   // FK gives us provenance. Skip silently if the receipt has no store
   // (admin can come back after pinning a store on the receipt).
   if (!storeId) return;
-  if (item.line_total_minor_units == null || item.line_total_minor_units <= 0) return;
-
-  const amount =
-    item.unit_price_minor_units != null && item.unit_price_minor_units > 0
-      ? item.unit_price_minor_units
-      : item.quantity > 0
-        ? Math.round(item.line_total_minor_units / item.quantity)
-        : item.line_total_minor_units;
-  if (!Number.isFinite(amount) || amount <= 0) return;
+  const amount = computePriceAmount(item);
+  if (amount == null) return;
 
   // Don't double-contribute. If a price row already exists for this
   // (receipt_item, product) pair — the auto_created_product confirm path
@@ -311,6 +372,137 @@ async function upsertAlias(
     { product_id: productId, alias, source },
     { onConflict: 'product_id,alias', ignoreDuplicates: true },
   );
+}
+
+// Coerces a raw `edits` field from the request body into the strict shape.
+// Treats unexpected types as "field absent" rather than throwing — the
+// admin client should be sending well-formed values, but a permissive
+// parser keeps a typo from blocking an otherwise valid resolve.
+function parseEdits(value: unknown): Edits {
+  if (!value || typeof value !== 'object') return {};
+  const v = value as Record<string, unknown>;
+  const out: Edits = {};
+  if (typeof v.productName === 'string') out.productName = v.productName;
+  // brand + category are nullable. `null` = explicit clear, string = set,
+  // anything else = leave alone. Empty string is treated as null so the
+  // UI's "blank input means clear" behavior round-trips cleanly.
+  if (v.brand === null) {
+    out.brand = null;
+  } else if (typeof v.brand === 'string') {
+    const t = v.brand.trim();
+    out.brand = t === '' ? null : t;
+  }
+  if (v.category === null) {
+    out.category = null;
+  } else if (typeof v.category === 'string') {
+    const t = v.category.trim().toLowerCase();
+    out.category = t === '' ? null : t;
+  }
+  if (typeof v.lineTotalMinorUnits === 'number') {
+    out.lineTotalMinorUnits = v.lineTotalMinorUnits;
+  }
+  if (v.unitPriceMinorUnits === null) {
+    out.unitPriceMinorUnits = null;
+  } else if (typeof v.unitPriceMinorUnits === 'number') {
+    out.unitPriceMinorUnits = v.unitPriceMinorUnits;
+  }
+  return out;
+}
+
+async function applyEdits(
+  admin: SupabaseClient,
+  edits: Edits,
+  item: any,
+  flag: any,
+  reason: Reason,
+): Promise<void> {
+  // 1. Product fields (name / brand / category). Only auto-created
+  // products can be edited here — matched/canonical products are shared
+  // catalog rows and editing them from a receipt context would have
+  // catalog-wide side effects. We bundle the three writes into one
+  // UPDATE so the row only ticks once.
+  const productPatch: Record<string, unknown> = {};
+  if (edits.productName !== undefined) {
+    if (reason !== 'auto_created_product') {
+      throw new Error('Product name edits only allowed for auto_created_product');
+    }
+    const trimmed = edits.productName.trim();
+    if (trimmed.length === 0) throw new Error('Product name cannot be empty');
+    if (trimmed.length > 200) throw new Error('Product name too long (max 200)');
+    productPatch.name = trimmed;
+  }
+  if (edits.brand !== undefined) {
+    if (reason !== 'auto_created_product') {
+      throw new Error('Brand edits only allowed for auto_created_product');
+    }
+    if (edits.brand !== null && edits.brand.length > 100) {
+      throw new Error('Brand too long (max 100)');
+    }
+    productPatch.brand = edits.brand;
+  }
+  if (edits.category !== undefined) {
+    if (reason !== 'auto_created_product') {
+      throw new Error('Category edits only allowed for auto_created_product');
+    }
+    if (edits.category !== null && !CATEGORIES.has(edits.category)) {
+      throw new Error(`category must be one of: ${[...CATEGORIES].join(', ')}`);
+    }
+    productPatch.category = edits.category;
+  }
+  if (Object.keys(productPatch).length > 0) {
+    if (!flag.auto_created_product_id) {
+      throw new Error('No auto-created product to edit');
+    }
+    const { error } = await admin
+      .from('products')
+      .update(productPatch)
+      .eq('id', flag.auto_created_product_id);
+    if (error) throw new Error(`Update product failed: ${error.message}`);
+  }
+
+  // 2. Line total / unit price on the receipt_item. Mutate the in-memory
+  // `item` too so the contributePrice / merge paths downstream see the
+  // edited values without re-fetching.
+  const itemPatch: Record<string, number | null> = {};
+  if (edits.lineTotalMinorUnits !== undefined) {
+    if (!Number.isInteger(edits.lineTotalMinorUnits) || edits.lineTotalMinorUnits <= 0) {
+      throw new Error('lineTotalMinorUnits must be a positive integer');
+    }
+    itemPatch.line_total_minor_units = edits.lineTotalMinorUnits;
+    item.line_total_minor_units = edits.lineTotalMinorUnits;
+  }
+  if (edits.unitPriceMinorUnits !== undefined) {
+    if (
+      edits.unitPriceMinorUnits !== null &&
+      (!Number.isInteger(edits.unitPriceMinorUnits) || edits.unitPriceMinorUnits <= 0)
+    ) {
+      throw new Error('unitPriceMinorUnits must be a positive integer or null');
+    }
+    itemPatch.unit_price_minor_units = edits.unitPriceMinorUnits;
+    item.unit_price_minor_units = edits.unitPriceMinorUnits;
+  }
+  if (Object.keys(itemPatch).length > 0) {
+    const { error } = await admin
+      .from('receipt_items')
+      .update(itemPatch)
+      .eq('id', item.id);
+    if (error) throw new Error(`Update receipt item failed: ${error.message}`);
+  }
+}
+
+// Same logic as contributePrice's amount derivation, lifted to a helper
+// so the auto_created_product confirm and merge paths can re-derive the
+// observed amount after applyEdits mutated the item.
+function computePriceAmount(item: any): number | null {
+  if (item.line_total_minor_units == null || item.line_total_minor_units <= 0) return null;
+  const amount =
+    item.unit_price_minor_units != null && item.unit_price_minor_units > 0
+      ? item.unit_price_minor_units
+      : item.quantity > 0
+        ? Math.round(item.line_total_minor_units / item.quantity)
+        : item.line_total_minor_units;
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return amount;
 }
 
 function jsonOk(payload: Record<string, unknown>): Response {

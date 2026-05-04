@@ -385,6 +385,41 @@ Within-receipt dedup keys off normalized `raw_text` so 3 instances of "MILK 1L" 
 
 ---
 
+## 2026-05-02 — Gemini 2.5 Flash for circular parsing too (not Claude)
+
+**Context:** Receipts use Gemini 2.5 Flash (DECISIONS.md 2026-05-01). Circulars are the next vision task — admins upload weekly grocery flyers and we need a structured product-and-price list from each one. The first instinct was Claude Opus 4.7 because circulars are layout-dense (multi-column tiles, overlaid prices, brand logos) and Claude's spatial reasoning is stronger.
+
+**Decision:** Use Gemini 2.5 Flash with `responseSchema` for circulars too. Same env var (`GOOGLE_AI_API_KEY`), same Edge Function shape as `process-receipt`.
+
+**Reasoning:**
+- **Cost.** Gemini Flash free tier is 15 req/min, 1500/day — admin circular volume (one per store per week, tens to low hundreds at maturity) sits comfortably inside it at $0. Opus 4.7 at scan-volume would be cents-per-circular but real money once price-per-month is the unit, and the project is not in a position to add an Anthropic line item right now.
+- **One vendor, one mental model.** Two vision providers means two env vars, two SDK shapes, two failure modes. Sticking with Gemini means the receipts and circulars functions share their structured-output discipline (`responseSchema`) and any future model upgrade is a one-line `GEMINI_MODEL` bump in two places.
+- **Layout quality is good enough at MVP.** Gemini 2.5 Flash on a clear circular scan returns workable product-and-price lists. The admin reviews every row anyway — the parser is a typing assistant, not a final source of truth. If quality on a specific store's circular is poor in practice, the escape hatch is the existing **re-parse** button, or per-circular prompt tweaks.
+- **Reversible.** If a future tier of work (e.g. autonomous price ingest with no admin review) ever requires better extraction, swapping in Claude is a one-function change to `parse-circular`.
+
+**Trade-offs accepted:**
+- Best-in-class vision is left on the table. We accept some extra admin correction work in exchange for $0 marginal cost.
+- Free-tier data-use clause carries over: Google may use submitted content for model improvement. Circulars are public marketing material so this is largely moot, but worth noting.
+
+---
+
+## 2026-05-02 — circular_items as a separate table (not JSON inside circulars)
+
+**Context:** Circulars produce N candidate products. Two ways to model the parsed output: (a) a JSON array on `circulars.parsed`, (b) a sibling `circular_items` table.
+
+**Decision:** Sibling table. `circulars.parsed` stays around for the verbatim Claude response (debugging / re-matching), but the row-per-candidate state lives in `circular_items` with FK columns to `prices` and `products`.
+
+**Reasoning:**
+- Each candidate has independent review state — `pending` → `accepted | rejected`, plus `resolved_by`, `resolved_at`, `notes`. Mutating one entry inside a JSON array would mean read-modify-write of the whole array, with no row-level locking.
+- On accept, we write a `prices` row and (if the admin didn't pick an existing product) a `products` row. Linking those back via `circular_items.contributed_price_id` and `contributed_product_id` gives us the same provenance trail receipts have via `prices.receipt_item_id` — admins can answer "where did this price come from?" by following one FK.
+- Same structural shape the receipt pipeline uses (`receipt_items` table with per-row matching + flagged_items state). Two ingest paths, one mental model.
+
+**Trade-offs accepted:**
+- A few extra columns to maintain. Cheap.
+- Two roundtrips to render the review page (circular + items). The page is server-rendered and admin-only, so latency budget is generous.
+
+---
+
 ## Template for future entries
 
 ```markdown

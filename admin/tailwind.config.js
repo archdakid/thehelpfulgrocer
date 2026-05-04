@@ -15,6 +15,7 @@ module.exports = {
         accent: '#0f766e',
         warn: '#b45309',
         danger: '#b91c1c',
+        success: '#15803d',
       },
     },
   },

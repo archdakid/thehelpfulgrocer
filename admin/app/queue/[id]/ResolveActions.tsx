@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
-import { resolveFlaggedItem } from './actions';
+import { resolveFlaggedItem, type ResolveEdits } from './actions';
 
 type Reason = 'unmatched' | 'low_confidence' | 'auto_created_product';
 
@@ -12,15 +12,64 @@ type Props = {
   flaggedItemId: string;
   reason: Reason;
   currentProductId: string | null;
+  currentProductName: string | null;
+  currentProductBrand: string | null;
+  currentProductCategory: string | null;
+  currentLineTotalMinorUnits: number;
+  currentUnitPriceMinorUnits: number | null;
+  currency: string;
   resolved: boolean;
 };
 
+// Mirrors migration 0004's CHECK constraint and the manage-product /
+// resolve-flagged-item allow-lists. Kept inline because Resolve is the
+// only consumer of the dropdown in this file.
+const PRODUCT_CATEGORIES = [
+  'produce',
+  'dairy',
+  'meat',
+  'bakery',
+  'pantry',
+  'frozen',
+  'beverage',
+  'snacks',
+] as const;
+type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
+
+function asCategory(raw: string | null): ProductCategory | '' {
+  if (!raw) return '';
+  return PRODUCT_CATEGORIES.includes(raw as ProductCategory)
+    ? (raw as ProductCategory)
+    : '';
+}
+
 type ProductHit = { id: string; name: string; brand: string | null };
+
+// Money inputs are decimal strings ("4.99"). Convert via Math.round to
+// avoid floating-point drift on the round trip — "0.10" * 100 is 10.0
+// in IEEE-754 but 12.95 * 100 is 1294.9999999999998 without rounding.
+function minorToDecimal(minor: number): string {
+  return (minor / 100).toFixed(2);
+}
+
+function decimalToMinor(s: string): number | null {
+  const trimmed = s.trim();
+  if (!trimmed) return null;
+  const num = Number(trimmed);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return Math.round(num * 100);
+}
 
 export default function ResolveActions({
   flaggedItemId,
   reason,
   currentProductId,
+  currentProductName,
+  currentProductBrand,
+  currentProductCategory,
+  currentLineTotalMinorUnits,
+  currentUnitPriceMinorUnits,
+  currency,
   resolved,
 }: Props) {
   const router = useRouter();
@@ -30,6 +79,22 @@ export default function ResolveActions({
   const [search, setSearch] = useState('');
   const [hits, setHits] = useState<ProductHit[]>([]);
   const [searching, setSearching] = useState(false);
+
+  // Edit fields. Pre-populated with current values so the admin sees
+  // what's about to be saved and can tweak rather than re-enter from
+  // scratch. We diff against the originals at submit time and only send
+  // the fields that actually changed.
+  const [nameInput, setNameInput] = useState(currentProductName ?? '');
+  const [brandInput, setBrandInput] = useState(currentProductBrand ?? '');
+  const [categoryInput, setCategoryInput] = useState<ProductCategory | ''>(
+    asCategory(currentProductCategory),
+  );
+  const [lineTotalInput, setLineTotalInput] = useState(
+    minorToDecimal(currentLineTotalMinorUnits),
+  );
+  const [unitPriceInput, setUnitPriceInput] = useState(
+    currentUnitPriceMinorUnits != null ? minorToDecimal(currentUnitPriceMinorUnits) : '',
+  );
 
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
@@ -60,16 +125,64 @@ export default function ResolveActions({
     };
   }, [search, supabase, currentProductId]);
 
+  // Build the edits diff. Only include fields that actually changed and,
+  // for productName, only when this flag is for an auto-created product
+  // (the Edge Function rejects rename attempts on other reasons).
+  const buildEdits = (): ResolveEdits | undefined => {
+    const edits: ResolveEdits = {};
+
+    if (reason === 'auto_created_product' && currentProductName != null) {
+      const trimmed = nameInput.trim();
+      if (trimmed && trimmed !== currentProductName) {
+        edits.productName = trimmed;
+      }
+      // Brand: empty input → null (clear), non-empty → set if changed.
+      const trimmedBrand = brandInput.trim();
+      const initialBrand = currentProductBrand ?? '';
+      if (trimmedBrand !== initialBrand) {
+        edits.brand = trimmedBrand === '' ? null : trimmedBrand;
+      }
+      // Category: '' → null (clear), valid value → set if changed.
+      const initialCategory = asCategory(currentProductCategory);
+      if (categoryInput !== initialCategory) {
+        edits.category = categoryInput === '' ? null : categoryInput;
+      }
+    }
+
+    const newLineTotal = decimalToMinor(lineTotalInput);
+    if (newLineTotal != null && newLineTotal !== currentLineTotalMinorUnits) {
+      edits.lineTotalMinorUnits = newLineTotal;
+    }
+
+    const newUnitPrice =
+      unitPriceInput.trim() === '' ? null : decimalToMinor(unitPriceInput);
+    // Only encode the unit-price edit when it materially differs. Treat
+    // "blank → was already null" and "same number" as no-op.
+    if (
+      (newUnitPrice === null && currentUnitPriceMinorUnits !== null) ||
+      (typeof newUnitPrice === 'number' && newUnitPrice !== currentUnitPriceMinorUnits)
+    ) {
+      edits.unitPriceMinorUnits = newUnitPrice;
+    }
+
+    return Object.keys(edits).length > 0 ? edits : undefined;
+  };
+
   const submit = (
     action: 'confirm' | 'correct' | 'reject' | 'merge',
     targetProductId?: string | null,
   ) => {
     setError(null);
+    // Edits are silently dropped on reject — the action throws away the
+    // line item's contribution anyway, so committing partial edits would
+    // leak into nowhere.
+    const edits = action === 'reject' ? undefined : buildEdits();
     startTransition(async () => {
       const res = await resolveFlaggedItem({
         flaggedItemId,
         action,
         targetProductId: targetProductId ?? null,
+        edits,
       });
       if (!res.ok) {
         setError(res.error);
@@ -95,6 +208,84 @@ export default function ResolveActions({
       <h2 className="text-sm font-semibold text-muted uppercase tracking-wider">
         Resolve
       </h2>
+
+      {/* Edit fields. Always visible on reasons that contribute or update
+          a price; the admin can correct OCR mistakes (wrong amount, wrong
+          decimal point) and capture sale prices accurately. The product
+          name input shows only for auto-created products — renaming a
+          canonical match would have catalog-wide effects. */}
+      <div className="space-y-3 border-b border-border pb-4">
+        <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">
+          Review &amp; correct
+        </h3>
+        {reason === 'auto_created_product' && currentProductName != null ? (
+          <>
+            <label className="block text-sm">
+              <span className="text-muted">Product name</span>
+              <input
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                maxLength={200}
+                className="mt-1 w-full border border-border rounded px-3 py-2 bg-bg focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-sm">
+                <span className="text-muted">Brand</span>
+                <input
+                  value={brandInput}
+                  onChange={(e) => setBrandInput(e.target.value)}
+                  maxLength={100}
+                  placeholder="—"
+                  className="mt-1 w-full border border-border rounded px-3 py-2 bg-bg focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="text-muted">Category</span>
+                <select
+                  value={categoryInput}
+                  onChange={(e) => setCategoryInput(e.target.value as ProductCategory | '')}
+                  className="mt-1 w-full border border-border rounded px-3 py-2 bg-bg focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+                >
+                  <option value="">— uncategorized —</option>
+                  {PRODUCT_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </>
+        ) : null}
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block text-sm">
+            <span className="text-muted">Line total ({currency})</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              min="0"
+              value={lineTotalInput}
+              onChange={(e) => setLineTotalInput(e.target.value)}
+              className="mt-1 w-full border border-border rounded px-3 py-2 bg-bg focus:outline-none focus:ring-2 focus:ring-accent text-sm tabular-nums"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="text-muted">Unit price ({currency})</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              min="0"
+              value={unitPriceInput}
+              onChange={(e) => setUnitPriceInput(e.target.value)}
+              placeholder="—"
+              className="mt-1 w-full border border-border rounded px-3 py-2 bg-bg focus:outline-none focus:ring-2 focus:ring-accent text-sm tabular-nums"
+            />
+          </label>
+        </div>
+      </div>
 
       {(reason === 'unmatched' ||
         reason === 'low_confidence' ||

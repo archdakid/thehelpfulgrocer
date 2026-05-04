@@ -1,3 +1,5 @@
+import { File as FsFile } from 'expo-file-system';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/queryKeys';
@@ -226,18 +228,39 @@ export function useReceiptItems(receiptId: string | null) {
 type UploadInput = {
   // file:// URI from expo-image-picker
   localUri: string;
-  // Best guess from picker (e.g. "image/jpeg"). Drives the file extension.
-  mimeType: string;
+  // Picker-reported dimensions; used to decide whether to downscale before
+  // uploading. Required so we don't upscale small images.
+  width: number;
+  height: number;
   storeId?: string | null;
   notes?: string | null;
   capturedAt?: string | null;
 };
 
-function extensionFor(mimeType: string): string {
-  if (mimeType === 'image/png') return 'png';
-  if (mimeType === 'image/heic' || mimeType === 'image/heif') return 'heic';
-  if (mimeType === 'image/webp') return 'webp';
-  return 'jpg';
+// Gemini's vision endpoint rejects with "Unable to process input image" when
+// inline_data approaches ~7MB or when the format isn't a clean JPEG/PNG. A
+// fresh phone capture at 12MP+ blows past that envelope even after JPEG
+// re-encode, so we cap the long edge here. 1600px is well above what receipt
+// OCR needs while staying under Gemini's safe inline limit.
+const MAX_EDGE_PX = 1600;
+
+async function normalizeToJpeg(
+  localUri: string,
+  width: number,
+  height: number,
+): Promise<string> {
+  const longEdge = Math.max(width, height);
+  // Only resize when the original is larger — passing resize: { width: N }
+  // would upscale a smaller image, which wastes bytes and softens text.
+  const actions =
+    longEdge > MAX_EDGE_PX
+      ? [{ resize: width >= height ? { width: MAX_EDGE_PX } : { height: MAX_EDGE_PX } }]
+      : [];
+  const result = await manipulateAsync(localUri, actions, {
+    compress: 0.85,
+    format: SaveFormat.JPEG,
+  });
+  return result.uri;
 }
 
 // Fire-and-forget invocation of the OCR Edge Function. We don't await it from
@@ -265,20 +288,39 @@ export function useUploadReceipt() {
       // Generating the receipt id client-side lets us name the storage object
       // before inserting the row, so the insert is the last step and either
       // both (object + row) succeed or we abandon an orphan object.
-      const receiptId =
-        typeof globalThis.crypto?.randomUUID === 'function'
-          ? globalThis.crypto.randomUUID()
-          : await fallbackUuid();
-      const ext = extensionFor(input.mimeType);
-      const path = `${userId}/${receiptId}.${ext}`;
+      const receiptId = generateReceiptId();
+      const path = `${userId}/${receiptId}.jpg`;
 
-      const response = await fetch(input.localUri);
-      const blob = await response.blob();
+      let normalizedUri: string;
+      try {
+        normalizedUri = await normalizeToJpeg(input.localUri, input.width, input.height);
+      } catch (err) {
+        throw wrapError('Image normalize failed', err);
+      }
+
+      // Read the normalized JPEG via expo-file-system, NOT fetch(file://).blob().
+      // The latter is a long-standing RN footgun: it returns a Blob with a
+      // plausible .size but whose bytes don't survive supabase-js's upload —
+      // the object lands in storage either zero-bytes or corrupted, which is
+      // exactly what we saw (blank previews + Gemini "Unable to process input
+      // image"). Reading via the File API hands supabase-js a real
+      // ArrayBuffer it can serialize correctly.
+      let bytes: ArrayBuffer;
+      try {
+        bytes = await new FsFile(normalizedUri).arrayBuffer();
+      } catch (err) {
+        throw wrapError('Read normalized file failed', err);
+      }
+      if (bytes.byteLength === 0) {
+        throw new Error(
+          `Normalized file is empty (0 bytes). originalUri=${input.localUri}`,
+        );
+      }
 
       const { error: uploadError } = await supabase.storage
         .from('receipts')
-        .upload(path, blob, { contentType: input.mimeType, upsert: false });
-      if (uploadError) throw uploadError;
+        .upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
+      if (uploadError) throw wrapError('Storage upload failed', uploadError);
 
       const { data, error } = await supabase
         .from('receipts')
@@ -296,7 +338,7 @@ export function useUploadReceipt() {
         // Insert failed but the bytes are already in storage — clean them up
         // so we don't leak orphan objects on transient errors.
         await supabase.storage.from('receipts').remove([path]);
-        throw error;
+        throw wrapError('Receipt row insert failed', error);
       }
       const receipt = mapReceipt(data as unknown as ReceiptRow);
       kickOffProcessing(receipt.id);
@@ -331,12 +373,65 @@ export function useReprocessReceipt() {
   });
 }
 
-// Fallback for environments without crypto.randomUUID (older Hermes builds).
-async function fallbackUuid(): Promise<string> {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+// Re-throws an upstream failure with a step-specific prefix while preserving
+// the original error's message and any extra fields (Supabase errors carry
+// `code`, `details`, `hint`, etc.). The logger.ts unwrap pass copies those
+// across automatically.
+function wrapError(stepLabel: string, cause: unknown): Error {
+  // Supabase errors come back as plain objects ({ message, code, details,
+  // hint, ... }) — `cause instanceof Error` is false. Calling
+  // String({}) gives "[object Object]", which is exactly the useless
+  // wrapped message we kept seeing. Handle the three real cases:
+  //   1. Real Error instance — copy enumerable own-props for codes/etc.
+  //   2. Plain object with a `message` — use that.
+  //   3. Anything else — String() it.
+  if (cause instanceof Error) {
+    const wrapped = new Error(`${stepLabel}: ${cause.message || 'unknown error'}`);
+    for (const key of Object.keys(cause)) {
+      if (key === 'message' || key === 'stack') continue;
+      (wrapped as unknown as Record<string, unknown>)[key] = (
+        cause as unknown as Record<string, unknown>
+      )[key];
+    }
+    return wrapped;
+  }
+  if (cause && typeof cause === 'object') {
+    const obj = cause as Record<string, unknown>;
+    const msg =
+      typeof obj.message === 'string' && obj.message
+        ? obj.message
+        : safeStringify(obj);
+    const wrapped = new Error(`${stepLabel}: ${msg}`);
+    for (const key of Object.keys(obj)) {
+      if (key === 'message' || key === 'stack') continue;
+      (wrapped as unknown as Record<string, unknown>)[key] = obj[key];
+    }
+    return wrapped;
+  }
+  return new Error(`${stepLabel}: ${String(cause)}`);
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+// Hermes (the JS engine RN uses by default) historically ships without
+// `globalThis.crypto` — neither `randomUUID` nor `getRandomValues` are
+// guaranteed. The previous fallback called getRandomValues unconditionally
+// and crashed on any device where crypto was undefined. Receipt IDs aren't
+// security-sensitive (they're an opaque storage key), so Math.random is
+// adequate — collision odds at our scale are negligible.
+function generateReceiptId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }

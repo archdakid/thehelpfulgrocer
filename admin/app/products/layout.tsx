@@ -1,10 +1,10 @@
 import AdminShell from '@/components/AdminShell';
 import { requireAdmin } from '@/lib/requireAdmin';
 
-export default async function QueueLayout({ children }: { children: React.ReactNode }) {
+export default async function ProductsLayout({ children }: { children: React.ReactNode }) {
   const { user } = await requireAdmin();
   return (
-    <AdminShell email={user.email ?? ''} active="queue">
+    <AdminShell email={user.email ?? ''} active="products">
       {children}
     </AdminShell>
   );

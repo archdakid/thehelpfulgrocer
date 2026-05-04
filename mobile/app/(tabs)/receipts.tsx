@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { Plus, Receipt as ReceiptIcon, WifiOff } from 'lucide-react-native';
+import { useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -19,6 +20,19 @@ export default function ReceiptsScreen() {
   const { isAuthed, isLoading: authLoading } = useAuth();
   const receiptsQuery = useReceipts();
   const { data: stores } = useStores();
+  // Pull-to-refresh state. Tied to RefreshControl explicitly so the
+  // 4s background poll (while any receipt is uploaded/processing)
+  // doesn't surface a static, frozen spinner — RefreshControl only
+  // animates when its `refreshing` flip was caused by an actual pull.
+  const [pulling, setPulling] = useState(false);
+  const handleRefresh = async () => {
+    setPulling(true);
+    try {
+      await receiptsQuery.refetch();
+    } finally {
+      setPulling(false);
+    }
+  };
 
   if (receiptsQuery.isError) {
     logger.error('useReceipts failed', { error: receiptsQuery.error });
@@ -96,8 +110,8 @@ export default function ReceiptsScreen() {
               onPress={() => router.push(`/receipt/${item.id}`)}
             />
           )}
-          refreshing={receiptsQuery.isRefetching}
-          onRefresh={() => void receiptsQuery.refetch()}
+          refreshing={pulling}
+          onRefresh={handleRefresh}
         />
       )}
 
