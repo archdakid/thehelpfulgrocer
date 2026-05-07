@@ -420,6 +420,123 @@ Within-receipt dedup keys off normalized `raw_text` so 3 instances of "MILK 1L" 
 
 ---
 
+## 2026-05-05 — Store locations as a child table of `stores`
+
+**Context:** Two scrapers landed (PriceSmart, SuperPharm). PriceSmart has 5 TT clubs and SuperPharm has 11 branches, each with independent stock and (sometimes) different prices. The current `stores` schema is one row per chain. Modelling each branch as a separate `stores` row would collapse the chain identity the compare-sheet renders today and fork the existing receipt/circular ingest paths (both of which talk about "the chain", not "the branch").
+
+**Decision:** Add `store_locations (id, store_id, name, external_id, region, is_active, lat, lng, ...)` as a child table. Backfill one location per existing chain, named after the chain. Per-location pricing/availability is added in subsequent migrations as a nullable `store_location_id` on `prices` and an extended PK on `product_store_availability` — receipt and admin writes stay store-level (location null), scraper writes go location-level.
+
+**Reasoning:**
+- Keeps the chain as the unit of identity for everything that already exists. Mobile compare-sheet rows continue to read `stores`; per-location detail is opt-in.
+- `external_id` per location lets re-scrapes find the right row in O(1) without fuzzy matching against names that differ across vendor APIs ("Port of Spain" vs "POS" vs "POS-1").
+- A 1:1 backfill on day one means the migration is a pure schema change — no downstream breakage. Vendor-specific locations get added through the (forthcoming) admin Locations CRUD, not inside the migration. Scraped data has no business living in `migrations/`.
+- `lat`/`lng` are nullable numerics rather than PostGIS — we don't have the extension enabled and the row count (~16) doesn't warrant it. Haversine in app code is fine for the future "nearest store" geofence.
+
+**Trade-offs accepted:**
+- Mobile compare-sheet has to grow per-location detail eventually ("3 of 5 locations have stock") — extra UI work later. Backward-compatible because `store_location_id` stays nullable.
+- Two read paths for prices once 0022 ships: location-specific (when a `store_location_id` is set) and store-level (when null). The `current_prices` view will need a "prefer specific over general" rule when both exist for the same (product, store).
+
+---
+
+## 2026-05-05 — Per-UOM columns on `products`; defer formal `product_equivalents` table
+
+**Context:** Scraped products carry unit-of-measure data (PriceSmart `weight` + `weight_uom`, SuperPharm `unit`) and PriceSmart sells some items by weight at the register (`sold_by_weight=1` — the displayed price is per lb, not per item). The compare-sheet's value goes up sharply if it can normalize $/100ml or $/100g across SKUs of different sizes, and if it can render PriceSmart's case packs ("$110 for case of 24 = $4.58 each") next to single-unit SKUs at other stores.
+
+**Decision:** Add four nullable columns to `products`:
+- `unit_size numeric` — size of one unit (500 for "500ml")
+- `unit_of_measure text` — normalized to a small enum: `each | g | kg | ml | L | oz | lb`
+- `is_sold_by_weight boolean default false` — when true, `prices.amount_minor_units` is per-UOM, not per-item
+- `units_per_pack integer` — `>1` means case/multipack; UI renders per-unit breakdown
+
+A separate `product_equivalents` table (formally linking "case of 24" to "single can") is **not** added now.
+
+**Reasoning:**
+- The columns are minimal, additive, nullable. Existing receipt and admin paths keep working without setting any of them.
+- `units_per_pack` + `unit_size` + `unit_of_measure` give the compare-sheet enough information to render the per-unit breakdown at display time. No second source of truth, no equivalence-graph maintenance burden.
+- A `product_equivalents` table would be valuable for "show me all variants of Heinz Ketchup across sizes" search results, but that's a different feature, not the price comparison. Worth building when that feature is on the roadmap, not before.
+- `is_sold_by_weight` is a boolean rather than a separate `price_basis` enum because there are only two sane states at this point (per-item vs per-UOM); if a third ever appears, swap it.
+
+**Trade-offs accepted:**
+- "What's the equivalent single-unit price for this case?" stays a UI computation, not a queryable join. Acceptable — the compare-sheet is the only consumer.
+- If two SKUs are identical contents in different pack sizes from the same brand, today they're separate `products` rows with no formal link. Search may show them as separate hits. Acceptable for MVP.
+
+---
+
+## 2026-05-05 — Sale data on `prices`, not `products`
+
+**Context:** Scrapers (PriceSmart in particular) expose per-snapshot sale state: `original_price_without_saving`, `saving_amount`, `saving_expiration_date`, `promo_label`. We want to surface "on sale" badges in the compare-sheet, and longer-term keep room for vendor-supplied promo copy or paid placement.
+
+**Decision:** Add three nullable columns to `prices`: `regular_amount_minor_units int`, `sale_ends_at timestamptz`, `promo_label text`. No `is_sale` boolean — sale state is derived as `regular_amount_minor_units IS NOT NULL AND regular_amount_minor_units > amount_minor_units`.
+
+**Reasoning:**
+- "On sale" is a property of a *snapshot in time*, not of a product. The same bottle of ketchup is on sale Tuesday and back to regular Wednesday. The append-only `prices` table is already snapshot-shaped — these columns belong there.
+- No `is_sale` boolean: a derived predicate over two columns that already exist is one source of truth. A boolean introduces a way for "marked on sale but regular price ≤ current price" inconsistencies to creep in.
+- `promo_label` is intentionally free-text. Vendor copy varies wildly ("BOGO", "Member's Sale", "Free Delivery"), and the same column doubles as the slot for future advertiser-supplied marketing copy without a schema change.
+- SuperPharm exposes no sale data — its rows leave the columns null. That's fine; the absence isn't a falsehood.
+
+**Trade-offs accepted:**
+- "Has this product ever been on sale?" requires scanning history — no rollup column on `products`. Acceptable; if it becomes a hot query, materialize a view.
+- SuperPharm sale detection has to be inferred from price-history dips. Deferred — when needed it's a view over `prices`, not new schema.
+
+---
+
+## 2026-05-05 — Scraper automation: out-of-repo scripts, persistent VPS, anon-JWT-bound ingest
+
+**Context:** Scrapers for PriceSmart (Playwright + Bloomreach), SuperPharm (direct fetch), and Massy (WooCommerce REST) need to run on a schedule and feed their normalized output into Postgres without exposing service-role credentials or vendor headers, and without committing multi-MB JSON dumps to the repo.
+
+**Decision:**
+- Scraper scripts and their outputs live entirely **outside the repo** (in a local `scrapers/` folder, fully gitignored — see 2026-05-07 entry). The only contract between the runner and this codebase is the `ingest-scrape` Edge Function HTTP boundary.
+- Scrapers run on a small persistent VPS (or a dev machine on cron during early days) — **not GitHub Actions**. Many retailer WAFs block GH IPs, Playwright on Actions is slow and flaky, and rotating IPs trips Bloomreach's bot detection.
+- The runner authenticates as a single admin "scrape user" via Supabase email/password, holds an anon JWT, and POSTs normalized payloads to the `ingest-scrape` Edge Function. **No service-role key on the runner.** Service role only inside the function.
+- Cadence (initial): daily delta scrape (price + availability) at 3am TT, weekly full catalog refresh on Sunday. Per-product enrichment (PriceSmart Phase 2) only for newly-seen SKUs.
+
+**Reasoning:**
+- Keeping scrapers fully out of git eliminates any chance of accidentally committing vendor cookies, session tokens, or scraped product data — even via a stray `git add .`. The HTTP boundary at `ingest-scrape` is the only seam the codebase needs to reason about, which makes the trust model trivial: anything inside the repo is scrutable, anything talking to the repo is admin-JWT-authenticated.
+- Persistent VPS IPs don't trip retailer bot detection. GH Actions IPs do.
+- Anon-JWT-bound runner mirrors the trust boundary already locked in for `manage-store` and `resolve-flagged-item`: client-side gets a JWT, server-side Edge Function re-checks admin and writes with service-role. No new pattern to learn or police.
+- Daily/weekly cadence is conservative. Receipts + admin manual entry cover the gaps between runs; we never claimed real-time accuracy.
+
+**Trade-offs accepted:**
+- A VPS is a recurring (~$4/mo) operational cost we didn't have. Worth it for reliability.
+- The runner is a separate process to monitor. We'll surface its status through the `scrape_runs` audit table so admins can see last-run state inside the existing admin app, not a separate dashboard.
+- Vendor APIs will rotate. The runner's fetcher + normalize layers are vendor-specific and brittle; the ingest contract is stable, so a vendor change doesn't cascade into the codebase.
+
+---
+
+## 2026-05-07 — Flatten per-location vendor data at the runner, not the Edge Function
+
+**Context:** The third vendor (Massy, WooCommerce REST) returns a single full-catalog scrape that contains per-location price/stock/availability for **all** of its 6 stores in one shot — every product carries a `locationMeta` array keyed by `locationId`. PriceSmart and SuperPharm, by contrast, emit per-location flat lists (one scrape run = one branch's snapshot). The `ingest-scrape` payload contract has to handle both shapes.
+
+**Decision:** Each vendor's normalize step at the runner expands per-product per-location vectors into flat `(product, location, price, availability)` rows before POSTing. The Edge Function only ever sees one uniform row shape — no fan-out logic on the server side.
+
+**Reasoning:**
+- The Edge Function row-loop stays trivially shaped regardless of vendor — one upsert sequence per row, no special-cases. Future vendors only need to extend the runner, not the function.
+- Compactness over the wire isn't a real constraint: the runner already pays the bandwidth cost of fetching the catalog, and the gzip ratio on flattened rows is high.
+- The runner is the right place for vendor-specific shape knowledge anyway. The function is the trust boundary; trust boundaries should be small.
+
+**Trade-offs accepted:**
+- Massy's payload size grows ~6× (one row per product × 6 locations) compared to a vector-shaped payload. Acceptable — total bytes are still under ~50 MB gzipped for a full catalog.
+- A single Massy scrape now writes ~6× the prices rows it used to (in the pre-location world). The append-only `prices` table is fine with this; partition by month if the row count ever becomes a concern.
+
+---
+
+## 2026-05-07 — Tighten scraper gitignore: scripts AND data both stay out of repo
+
+**Context:** The earlier 2026-05-05 decision had scraper scripts tracked in the repo and only data dumps + `.env` files gitignored. When a third vendor's scripts were added the next day, it became clear the half-measure was the wrong shape: vendor headers, consumer keys, and Bloomreach session details were sitting in committable files.
+
+**Decision:** `scrapers/` at the project root is now fully gitignored. Both scripts and outputs live there; nothing under `scrapers/` is tracked. Any code artifact related to scraping that *should* be tracked (Edge Functions, payload types, migrations) lives under `supabase/`, `admin/`, or `mobile/`.
+
+**Reasoning:**
+- One clean rule (`scrapers/`) is harder to violate accidentally than a wildcard list (`scrapers/**/*.json`, `scrapers/**/.env`, ...). When a new vendor or new file type appears in `scrapers/`, the rule still holds — no gitignore edit needed.
+- The runner's vendor-specific code is genuinely a different concern from the codebase: it's per-host setup, runs on its own schedule, and has its own deploy lifecycle. Treating it as an isolated subtree is honest.
+- The `ingest-scrape` HTTP boundary is the only contract that matters for the codebase to reason about. Everything else is "the runner's problem."
+
+**Trade-offs accepted:**
+- Scraper scripts no longer benefit from PR review or version history inside this repo. Acceptable — the runner is owned by a single operator (the project owner) and its iteration speed matters more than its review process. If multi-operator scraping ever happens, a separate private repo is the answer, not re-tracking inside this one.
+- Code-share between vendors (a hypothetical `scrapers/lib/normalize.ts`) is on the runner side, not visible from the codebase. Acceptable — the ingest contract is the share point.
+
+---
+
 ## Template for future entries
 
 ```markdown

@@ -1,0 +1,14 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+
+# Scrapers — scripts AND outputs live outside the repo. The only contract
+# between the scraper runner and this codebase is the `ingest-scrape` Edge
+# Function HTTP boundary. Keeping the whole subtree ignored means a stray
+# `git add .` can't leak vendor cookies, session tokens, or scraped data.
+scrapers/
+
+# General
+.env
+.env.local
