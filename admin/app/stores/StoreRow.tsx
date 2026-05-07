@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 
 import { renameStore, setStoreActive } from './actions';
+import DeleteStoreButton from './DeleteStoreButton';
 
 type Props = {
   store: {
@@ -115,6 +116,11 @@ export default function StoreRow({ store }: Props) {
             >
               {store.is_active ? 'Deactivate' : 'Reactivate'}
             </button>
+            <DeleteStoreButton
+              storeId={store.id}
+              storeName={store.name}
+              disabled={isPending}
+            />
           </div>
         )}
       </div>

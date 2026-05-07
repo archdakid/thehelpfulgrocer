@@ -9,13 +9,27 @@
 //      `profiles.is_admin = true` against the JWT-bound client.
 //   2. We escalate to the service role for the actual write.
 //
-// Three actions:
+// Four actions:
 //   - create     { name, region? }              → insert, returns new row
 //   - rename     { storeId, name }              → update name only
 //   - set_active { storeId, isActive }          → soft-delete via flag
+//   - delete     { storeId, confirm: bool }     → preview counts (confirm=false)
+//                                                 or actually delete (confirm=true)
 //
-// No hard delete: prices.store_id has ON DELETE CASCADE, so deleting a
-// store would wipe its price history. is_active=false is the right pattern.
+// Hard delete cascade behavior:
+//   - prices.store_id                       → CASCADE (deleted)
+//   - product_store_availability.store_id   → CASCADE (deleted)
+//   - store_locations.store_id              → CASCADE (deleted; their nested
+//                                                       prices SET NULL, their
+//                                                       per-location availability
+//                                                       CASCADE)
+//   - receipts.store_id                     → SET NULL (preserved, unlinked)
+//   - circulars.store_id                    → RESTRICT (BLOCKS the delete)
+//
+// Soft-delete (set_active false) remains the right call most of the time —
+// it preserves price history and lets you reactivate. Hard delete exists
+// for genuine cleanup (a store added by mistake, a vendor we'll never
+// support). The two-phase preview keeps the destructive click honest.
 
 // deno-lint-ignore-file no-explicit-any
 
@@ -30,7 +44,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-type Action = 'create' | 'rename' | 'set_active';
+type Action = 'create' | 'rename' | 'set_active' | 'delete';
 
 type Payload = {
   action?: unknown;
@@ -38,6 +52,7 @@ type Payload = {
   name?: unknown;
   region?: unknown;
   isActive?: unknown;
+  confirm?: unknown;
 };
 
 Deno.serve(async (req) => {
@@ -48,7 +63,7 @@ Deno.serve(async (req) => {
   try {
     const body = (await req.json().catch(() => null)) as Payload | null;
     const action = body?.action as Action | undefined;
-    if (!action || !['create', 'rename', 'set_active'].includes(action)) {
+    if (!action || !['create', 'rename', 'set_active', 'delete'].includes(action)) {
       return jsonError(400, 'Invalid action');
     }
 
@@ -95,6 +110,13 @@ Deno.serve(async (req) => {
       if (!storeId) return jsonError(400, 'storeId is required');
       if (!name) return jsonError(400, 'name is required');
       return await renameStore(admin, storeId, name);
+    }
+
+    if (action === 'delete') {
+      const storeId = typeof body?.storeId === 'string' ? body.storeId : null;
+      if (!storeId) return jsonError(400, 'storeId is required');
+      const confirm = body?.confirm === true;
+      return await deleteStore(admin, storeId, confirm);
     }
 
     // set_active
@@ -164,6 +186,126 @@ async function setActive(admin: SupabaseClient, storeId: string, isActive: boole
   if (error) return jsonError(500, error.message);
   if (!data) return jsonError(404, 'Store not found');
   return jsonOk({ ok: true, store: data });
+}
+
+// Two-phase delete: confirm=false returns the cascade counts (so the admin
+// UI can render "this will wipe N prices, M availability rows, K locations
+// — and L receipts will be unlinked"); confirm=true re-counts and deletes.
+// We re-count under confirm rather than trusting whatever the UI saw,
+// because rows may have arrived between preview and confirm.
+//
+// `circulars` references stores with ON DELETE RESTRICT. If any exist, the
+// delete is blocked at the SQL level — we surface that as a 409 before the
+// DELETE so the admin gets a clear message instead of a raw 23503.
+async function deleteStore(
+  admin: SupabaseClient,
+  storeId: string,
+  confirm: boolean,
+) {
+  const { data: store, error: readErr } = await admin
+    .from('stores')
+    .select('id, name, is_active')
+    .eq('id', storeId)
+    .maybeSingle();
+  if (readErr) return jsonError(500, readErr.message);
+  if (!store) return jsonError(404, 'Store not found');
+
+  const counts = await countDependents(admin, storeId);
+  if ('error' in counts) return jsonError(500, counts.error);
+
+  // Preview: return counts and let the UI decide. Even if circulars > 0
+  // we still hand back the preview so the admin sees the blocker
+  // alongside the rest of the picture.
+  if (!confirm) {
+    return jsonOk({
+      ok: true,
+      preview: true,
+      store: { id: store.id, name: store.name },
+      counts: counts.value,
+      blocked: counts.value.circulars > 0
+        ? `Cannot delete while ${counts.value.circulars} circular(s) reference this store. Remove or reassign them first.`
+        : null,
+    });
+  }
+
+  if (counts.value.circulars > 0) {
+    return jsonError(
+      409,
+      `Cannot delete: ${counts.value.circulars} circular(s) reference this store. Remove or reassign them first.`,
+    );
+  }
+
+  const { error: delErr } = await (admin.from('stores') as any)
+    .delete()
+    .eq('id', storeId);
+  if (delErr) {
+    // Defense-in-depth: if a circular landed between count and delete,
+    // surface the FK violation as the same 409 the count-gate produced.
+    if (delErr.code === '23503') {
+      return jsonError(
+        409,
+        'Cannot delete: a circular or other restricted row references this store.',
+      );
+    }
+    return jsonError(500, delErr.message);
+  }
+
+  return jsonOk({
+    ok: true,
+    deleted: true,
+    store: { id: store.id, name: store.name },
+    counts: counts.value,
+  });
+}
+
+async function countDependents(
+  admin: SupabaseClient,
+  storeId: string,
+): Promise<
+  | {
+      value: {
+        prices: number;
+        availability: number;
+        locations: number;
+        receipts: number;
+        circulars: number;
+      };
+    }
+  | { error: string }
+> {
+  const [prices, availability, locations, receipts, circulars] = await Promise.all([
+    (admin.from('prices') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('store_id', storeId),
+    (admin.from('product_store_availability') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('store_id', storeId),
+    (admin.from('store_locations') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('store_id', storeId),
+    (admin.from('receipts') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('store_id', storeId),
+    (admin.from('circulars') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('store_id', storeId),
+  ]);
+
+  if (prices.error) return { error: `prices count: ${prices.error.message}` };
+  if (availability.error) return { error: `availability count: ${availability.error.message}` };
+  if (locations.error) return { error: `locations count: ${locations.error.message}` };
+  if (receipts.error) return { error: `receipts count: ${receipts.error.message}` };
+  if (circulars.error) return { error: `circulars count: ${circulars.error.message}` };
+
+  return {
+    value: {
+      prices: prices.count ?? 0,
+      availability: availability.count ?? 0,
+      locations: locations.count ?? 0,
+      receipts: receipts.count ?? 0,
+      circulars: circulars.count ?? 0,
+    },
+  };
 }
 
 function jsonOk(payload: Record<string, unknown>): Response {

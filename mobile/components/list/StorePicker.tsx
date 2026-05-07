@@ -53,14 +53,16 @@ export default function StorePicker() {
         active={activeStoreId === null}
         onPress={() => setActiveStoreId(null)}
       />
-      {(stores ?? []).map((store: Store) => (
-        <Pill
-          key={store.id}
-          label={store.name}
-          active={activeStoreId === store.id}
-          onPress={() => setActiveStoreId(store.id)}
-        />
-      ))}
+      {(stores ?? [])
+        .filter((store: Store) => store.is_active)
+        .map((store: Store) => (
+          <Pill
+            key={store.id}
+            label={store.name}
+            active={activeStoreId === store.id}
+            onPress={() => setActiveStoreId(store.id)}
+          />
+        ))}
     </ScrollView>
   );
 }
