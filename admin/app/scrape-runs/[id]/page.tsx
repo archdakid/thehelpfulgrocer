@@ -23,6 +23,26 @@ type RowError = {
   rowIndex?: number;
 };
 
+// See scrape-runs/page.tsx for why this is hand-rolled.
+type ScrapeRunDetailRow = {
+  id: string;
+  vendor: string;
+  mode: string;
+  status: string;
+  started_at: string;
+  ended_at: string | null;
+  rows_received: number | null;
+  locations_upserted: number | null;
+  products_upserted: number | null;
+  prices_inserted: number | null;
+  availability_writes: number | null;
+  categories_writes: number | null;
+  errors: unknown;
+  fatal_error: string | null;
+  payload_size_bytes: number | null;
+  triggered_by: string | null;
+};
+
 type PageProps = {
   params: Promise<{ id: string }>;
 };
@@ -49,16 +69,17 @@ export default async function ScrapeRunDetailPage({ params }: PageProps) {
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
-  const { data: run, error } = await supabase
-    .from('scrape_runs')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // REASON: see scrape-runs/page.tsx — categories_writes pending types regen.
+  const { data: run, error } = await (supabase.from('scrape_runs') as any)
     .select(
       `id, vendor, mode, status, started_at, ended_at, rows_received,
        locations_upserted, products_upserted, prices_inserted,
-       availability_writes, errors, fatal_error, payload_size_bytes,
-       triggered_by`,
+       availability_writes, categories_writes, errors, fatal_error,
+       payload_size_bytes, triggered_by`,
     )
     .eq('id', id)
-    .maybeSingle();
+    .maybeSingle() as { data: ScrapeRunDetailRow | null; error: { message: string } | null };
 
   if (error) {
     return (
@@ -118,6 +139,9 @@ export default async function ScrapeRunDetailPage({ params }: PageProps) {
         </Field>
         <Field label="Availability writes">
           <Mono>{run.availability_writes}</Mono>
+        </Field>
+        <Field label="Categories writes">
+          <Mono>{run.categories_writes ?? 0}</Mono>
         </Field>
       </div>
 

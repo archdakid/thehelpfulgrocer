@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-07** (end of Session 19 — F11 Phase 2 scraper ingest foundation, store hard-delete, locations CRUD).
+Last updated: **2026-05-08** (end of Session 20 — F11 Phase 2 per-store vendor categories: schema, ingest hook, mobile Browse "By store" toggle).
 
 ---
 
@@ -115,6 +115,13 @@ Last updated: **2026-05-07** (end of Session 19 — F11 Phase 2 scraper ingest f
 - [x] Edge Function `import-product-image` (`fetchCandidates` / `import` / `skip`): OFF candidate fetcher returns per-section image URLs (front, packaging, ingredients, nutrition); import downloads bytes into the `product-images` bucket and points `image_url` at the new URL (so mobile renders without an OFF round-trip and we're insulated from OFF mutating the source); skip flips the new column to suppress requeueing
 - [x] `/products/images` queue: lists products without an admin image and a real UPC, per-row Fetch candidates / Skip / inline candidate gallery with click-to-import. Header link from `/products` shows the queue count
 
+### Scraper ingest F11 Phase 2 — per-store vendor categories (Session 20)
+- [x] Migration `0025_product_store_categories.sql`: `product_store_categories(product_id, store_id, vendor_path, vendor_path_root, source check('scrape'|'admin'), first_seen_at, last_seen_at)` join table; `unique (product_id, store_id, vendor_path)` so Massy's "in N categories at once" produces N rows. Indexed on `(store_id, vendor_path_root)` (Browse tile grid) and `(store_id, vendor_path)` (drill-down). Public read RLS, service-role write. Adds `scrape_runs.categories_writes` counter.
+- [x] `ingest-scrape` extended: `Row.product.vendorCategories?: { path, root }[]` flows through `upsertVendorCategories` after the product is ensured. Per-row de-dup on `path`, on-conflict bumps `last_seen_at`. Counts surface in scrape-runs admin list + detail.
+- [x] Mobile Browse Global / By-store toggle: hidden when no active store is set; By-store mode renders generic `VendorCategoryTile` rows from `useStoreVendorCategories(storeId)` (counts distinct products per root). Tapping a root → new `/category/store/[storeId]/[root]` route running the existing `CategoryProductRow` against `useProductsAtStoreVendorRoot`.
+- [x] DECISIONS entry: per-store categories as a join table, preserved verbatim, `vendor_categories` reference table deferred. Per the 2026-05-08 entry: receipts and admin manual entry don't write here — that asymmetry is intentional.
+- [x] Mobile + admin both clean typecheck. The two new mobile hooks and the admin scrape-runs reads cast through `any` until `npx supabase gen types typescript --linked` runs against 0025; same temporary-cast pattern Session 19 introduced for `store_locations` / `scrape_runs`.
+
 ### Scraper ingest F11 Phase 2 — schema + ingest function + admin store/locations (Session 19)
 - [x] Migrations 0019–0024: `store_locations` (per-branch identity with `external_id`), products UOM/pack columns (`unit_size`, `unit_of_measure`, `is_sold_by_weight`, `units_per_pack`, `description`), `prices` sale columns (`regular_amount_minor_units`, `sale_ends_at`, `promo_label`), `prices.store_location_id` (nullable FK, ON DELETE SET NULL), `product_store_availability` extended with `store_location_id` + NULLS NOT DISTINCT natural key, `scrape_runs` audit table; extends `prices.source` and `product_aliases.source` enums to include `'scrape'`
 - [x] `ingest-scrape` Edge Function: anon-JWT admin re-check → service-role upserts of `store_locations` (on `store_id, external_id`), `products` (lookup by UPC then by vendor-namespaced alias, then insert; race-safe on 23505), `prices` (append-only with sale columns), `product_store_availability` (upsert on three-column natural key). Wraps everything in a `scrape_runs` row that flips to `success` / `partial` (per-row failures only, capped at 200) / `failed` (fatal). Per `docs/DECISIONS.md` 2026-05-07: vendor per-location vectors are flattened at the runner so this function only sees one uniform row shape.
@@ -161,11 +168,12 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **Scraper runner deployment** — picks a vendor (PriceSmart / SuperPharm / Massy), runs on a persistent VPS, posts to `ingest-scrape`. The schema, function, and audit table are in. Until the runner is deployed, prices stay receipt + admin-driven.
-2. **`supabase gen types typescript --linked > mobile/types/database.ts`** — bring the typed client up to date with migrations 0019–0024 so the `/stores/[id]/locations` and `/scrape-runs` pages can drop their temporary casts. Hygiene before the next admin / mobile change touches `store_location_id`, `scrape_runs`, `regular_amount_minor_units`, etc.
-3. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
-4. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
-5. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).
+1. **Scraper runner deployment** — picks a vendor (PriceSmart / SuperPharm / Massy), runs on a persistent VPS, posts to `ingest-scrape`. Schema, function, audit table, AND per-store categories pipeline are in. Until the runner is deployed, prices and vendor categories stay receipt + admin-driven (which means: no vendor categories at all, since receipt/admin paths don't write to `product_store_categories`).
+2. **`supabase gen types typescript --linked > mobile/types/database.ts`** — bring the typed client up to date with migrations 0019–0025 so the `/stores/[id]/locations`, `/scrape-runs`, and the new mobile vendor-category hooks can drop their temporary casts. Hygiene before the next admin / mobile change touches `store_location_id`, `scrape_runs.categories_writes`, `product_store_categories`, etc.
+3. **Compare-sheet UI for shipped scrape data** — sale / promo label, out-of-stock indicator, $/100ml + $/100g UOM normalization, "case of N = $X each" pack-size breakdown, per-location stock summary. All schema is in (0021/0022/0023); UI hasn't been wired.
+4. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
+5. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
+6. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).
 
 ---
 
@@ -215,7 +223,7 @@ main
                                                                 └── feature/receipts-phase1
                                                                     └── feature/admin-phase1
                                                                         └── feature/admin-phase2-circulars
-                                                                            └── feature/scraper-ingest-foundation  (current)
+                                                                            └── feature/scraper-ingest-foundation  (current — Sessions 19 + 20)
 ```
 
 When ready to consolidate: merge each in order into `main`, or squash-merge groups (foundation → design pass → backend → features).

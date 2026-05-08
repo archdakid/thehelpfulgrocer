@@ -2,6 +2,27 @@ import Link from 'next/link';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
+// Until `npx supabase gen types typescript --linked` runs against migration
+// 0025, the generated types lack `scrape_runs.categories_writes` and the
+// typed PostgREST select on the new column collapses the row to a
+// SelectQueryError. Hand-rolled row type for both list + detail pages.
+type ScrapeRunListRow = {
+  id: string;
+  vendor: string;
+  mode: string;
+  status: string;
+  started_at: string;
+  ended_at: string | null;
+  rows_received: number | null;
+  locations_upserted: number | null;
+  products_upserted: number | null;
+  prices_inserted: number | null;
+  availability_writes: number | null;
+  categories_writes: number | null;
+  errors: unknown;
+  fatal_error: string | null;
+};
+
 const STATUS_TONE: Record<string, string> = {
   running: 'bg-accent/10 text-accent',
   success: 'bg-success/10 text-success',
@@ -32,15 +53,19 @@ function formatDuration(startIso: string, endIso: string | null): string {
 export default async function ScrapeRunsPage() {
   const supabase = await createSupabaseServerClient();
 
-  const { data, error } = await supabase
-    .from('scrape_runs')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // REASON: `scrape_runs.categories_writes` (migration 0025) hasn't landed in
+  // mobile/types/database.ts until `gen types --linked` runs. Cast the typed
+  // .from() call so the unknown column doesn't poison the row type. Same
+  // pattern as the existing `store_locations` casts in Session 19.
+  const { data, error } = await (supabase.from('scrape_runs') as any)
     .select(
       `id, vendor, mode, status, started_at, ended_at, rows_received,
        locations_upserted, products_upserted, prices_inserted,
-       availability_writes, errors, fatal_error`,
+       availability_writes, categories_writes, errors, fatal_error`,
     )
     .order('started_at', { ascending: false })
-    .limit(100);
+    .limit(100) as { data: ScrapeRunListRow[] | null; error: { message: string } | null };
 
   return (
     <div className="space-y-5">
@@ -100,7 +125,8 @@ export default async function ScrapeRunsPage() {
                         {row.locations_upserted} locations ·{' '}
                         {row.products_upserted} products ·{' '}
                         {row.prices_inserted} prices ·{' '}
-                        {row.availability_writes} availability
+                        {row.availability_writes} availability ·{' '}
+                        {row.categories_writes ?? 0} categories
                         {errorCount > 0 ? ` · ${errorCount} row error${errorCount === 1 ? '' : 's'}` : ''}
                         {row.fatal_error ? ` · ${row.fatal_error.slice(0, 80)}` : ''}
                       </p>

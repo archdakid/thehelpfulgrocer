@@ -537,6 +537,31 @@ A separate `product_equivalents` table (formally linking "case of 24" to "single
 
 ---
 
+## 2026-05-08 — Per-store vendor categories as a join table; preserve verbatim
+
+**Context:** `products.category` is a single 8-bucket global enum (`produce | dairy | meat | bakery | pantry | frozen | beverage | snacks`). It works for the cross-store Browse grid users see today — eight tiles, one identity per product. It's the wrong shape for what scrapers actually return: Massy publishes a ~1000-node tree where one product can sit in multiple categories at once, PriceSmart has its own warehouse-club taxonomy, SuperPharm has a third. Flattening all of that into eight buckets throws away most of the value once scraped catalogs land.
+
+**Decision:** Add `product_store_categories(product_id, store_id, vendor_path, vendor_path_root, source, first_seen_at, last_seen_at)` as a join table preserving each retailer's native taxonomy verbatim. `unique (product_id, store_id, vendor_path)` so a product in N categories at one store produces N rows. The runner joins path segments with ` › ` and supplies `vendor_path_root` (first segment) so the function is decoupled from any separator convention. `products.category` stays as the global / search-canonical dimension and is left untouched.
+
+The mobile Browse tab gains a Global / By store toggle: Global renders the existing 8-bucket grid (no change); By store renders top-level vendor tiles (`vendor_path_root`) for the active store. The toggle only renders when a store is selected — the by-store view has nothing to show otherwise.
+
+A formal `vendor_categories` reference table (deduping paths and offering admin curation) is **not** added now.
+
+**Reasoning:**
+- Each retailer's taxonomy is the unit of identity for that retailer. Collapsing PriceSmart's "Beverages › Soft Drinks › Cola" to "beverage" loses every drill-down a user might use to navigate that store's catalog. The join table preserves the source-of-truth path; the global category remains for search and cross-store browsing.
+- A join table (rather than a column on `products`) handles the "in multiple categories at once" case Massy actually exhibits, without forcing the client to split a delimited string at read time.
+- `vendor_path_root` is denormalized rather than computed on read because the Browse tile-grid query is the hot path — `(store_id, vendor_path_root)` is indexable and the runner is the right place to own the separator convention. A `split_part(vendor_path, ' › ', 1)` generated column would tie the schema to the separator forever; an explicit column lets the runner change conventions without a migration.
+- `last_seen_at` (bumped on upsert) gives admins a way to spot stale assignments after a vendor reorganizes its tree, without forcing a row delete-and-rewrite per re-scrape.
+- A `vendor_categories` reference table would normalize paths across products and let admins rename one path globally — but that's curation work admins explicitly don't want to do (vendor labelling is the unit of identity, not a thing to clean up). If admins ever want to suppress one specific awful path, a column on this join table (`hidden boolean`) is a one-line addition; we don't pay for that capability up front.
+
+**Trade-offs accepted:**
+- Browse becomes more powerful but more idiosyncratic: every retailer's taxonomy quirks come through verbatim. PriceSmart's all-caps "MEMBER'S SELECTION", Massy's "On Sale" cross-cutting category, SuperPharm's pharmacy-vs-grocery split — all of it lands as-is. We accept that this is what users actually see when they walk into the store, so it's the most honest representation.
+- Path text is duplicated across many rows (Massy has ~1000 categories × thousands of products). Storage cost is negligible at MVP scale; if it becomes a concern, the path can be hoisted into a `vendor_categories(id, store_id, path)` table later — the join table's `vendor_path` becomes a FK.
+- Receipt + admin manual entry don't write here. A receipt-attributed product has no per-store taxonomy assignment until a scraper sees it. That's correct: receipts attribute *prices*, not *taxonomy memberships*. Acceptable asymmetry.
+- Counter `categories_writes` added to `scrape_runs` so admins see "did the categories pipeline work this run?" alongside the existing prices/availability counters. One extra column on an already-evolving audit table.
+
+---
+
 ## Template for future entries
 
 ```markdown

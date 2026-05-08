@@ -10,7 +10,9 @@
 //      (store_id, external_id).
 //   4. For each row: ensures a `products` row exists (lookup by UPC, then by
 //      vendor-namespaced alias, else insert), inserts an append-only `prices`
-//      observation, and upserts `product_store_availability`.
+//      observation, upserts `product_store_availability`, and (per migration
+//      0025) upserts each supplied vendor category path into
+//      `product_store_categories`.
 //   5. Closes the audit row with counters + per-row errors.
 //
 // Per-row errors don't fail the whole call — the run flips to 'partial' and
@@ -54,6 +56,16 @@ type ProductInput = {
   unitOfMeasure?: string;
   isSoldByWeight?: boolean;
   unitsPerPack?: number;
+  // Per-store native taxonomy paths. Multiple paths allowed (Massy products
+  // can sit in several categories at once). The runner is responsible for
+  // joining segments with " › " and supplying `root` (the first segment) so
+  // the function never has to reason about separator conventions.
+  vendorCategories?: VendorCategoryInput[];
+};
+
+type VendorCategoryInput = {
+  path: string;
+  root: string;
 };
 
 type Row = {
@@ -84,6 +96,7 @@ type Counters = {
   products_upserted: number;
   prices_inserted: number;
   availability_writes: number;
+  categories_writes: number;
 };
 
 type RowError = { kind: string; detail: string; rowIndex?: number };
@@ -168,6 +181,7 @@ Deno.serve(async (req) => {
       products_upserted: 0,
       prices_inserted: 0,
       availability_writes: 0,
+      categories_writes: 0,
     };
     const errors: RowError[] = [];
 
@@ -213,6 +227,16 @@ Deno.serve(async (req) => {
             adminId,
           });
           counters.availability_writes++;
+        }
+
+        if (Array.isArray(row.product.vendorCategories) && row.product.vendorCategories.length > 0) {
+          const written = await upsertVendorCategories(
+            admin,
+            productId,
+            storeId,
+            row.product.vendorCategories,
+          );
+          counters.categories_writes += written;
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -408,6 +432,48 @@ async function insertPrice(
   if (error) throw new Error(`Price insert failed: ${error.message}`);
 }
 
+// Per-store vendor categories (migration 0025). Returns the count of distinct
+// (path) entries actually written so the run can report it. Per-row errors
+// bubble up to the caller's try/catch and become a partial-run row error —
+// categories are nice-to-have, never block a price write.
+async function upsertVendorCategories(
+  admin: SupabaseClient,
+  productId: string,
+  storeId: string,
+  categories: VendorCategoryInput[],
+): Promise<number> {
+  // De-dup within the row so a vendor that lists the same path twice doesn't
+  // trip the unique constraint or inflate the counter.
+  const seen = new Set<string>();
+  const inserts: Record<string, unknown>[] = [];
+  for (const c of categories) {
+    if (typeof c?.path !== 'string' || typeof c?.root !== 'string') continue;
+    const path = c.path.trim();
+    const root = c.root.trim();
+    if (!path || !root) continue;
+    if (path.length > 500 || root.length > 200) continue;
+    if (seen.has(path)) continue;
+    seen.add(path);
+    inserts.push({
+      product_id: productId,
+      store_id: storeId,
+      vendor_path: path,
+      vendor_path_root: root,
+      source: 'scrape',
+      last_seen_at: new Date().toISOString(),
+    });
+  }
+  if (inserts.length === 0) return 0;
+
+  // unique (product_id, store_id, vendor_path). On conflict, bump last_seen_at
+  // so admins can see when a path was last observed for this product (helps
+  // identify stale assignments after a vendor restructures its taxonomy).
+  const { error } = await (admin.from('product_store_categories') as any)
+    .upsert(inserts, { onConflict: 'product_id,store_id,vendor_path' });
+  if (error) throw new Error(`Vendor categories upsert failed: ${error.message}`);
+  return inserts.length;
+}
+
 async function upsertAvailability(
   admin: SupabaseClient,
   args: {
@@ -449,6 +515,7 @@ async function closeRun(
       products_upserted: counters.products_upserted,
       prices_inserted: counters.prices_inserted,
       availability_writes: counters.availability_writes,
+      categories_writes: counters.categories_writes,
       errors,
       fatal_error: fatalError,
     })
