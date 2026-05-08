@@ -23,24 +23,6 @@ type RowError = {
   rowIndex?: number;
 };
 
-type ScrapeRunDetail = {
-  id: string;
-  vendor: string;
-  mode: string;
-  status: string;
-  started_at: string;
-  ended_at: string | null;
-  rows_received: number;
-  locations_upserted: number;
-  products_upserted: number;
-  prices_inserted: number;
-  availability_writes: number;
-  errors: unknown;
-  fatal_error: string | null;
-  payload_size_bytes: number | null;
-  triggered_by: string | null;
-};
-
 type PageProps = {
   params: Promise<{ id: string }>;
 };
@@ -67,9 +49,7 @@ export default async function ScrapeRunDetailPage({ params }: PageProps) {
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sb = supabase as any;
-  const { data: run, error } = (await sb
+  const { data: run, error } = await supabase
     .from('scrape_runs')
     .select(
       `id, vendor, mode, status, started_at, ended_at, rows_received,
@@ -78,10 +58,7 @@ export default async function ScrapeRunDetailPage({ params }: PageProps) {
        triggered_by`,
     )
     .eq('id', id)
-    .maybeSingle()) as {
-    data: ScrapeRunDetail | null;
-    error: { message: string } | null;
-  };
+    .maybeSingle();
 
   if (error) {
     return (

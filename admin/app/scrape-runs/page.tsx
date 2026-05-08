@@ -16,22 +16,6 @@ const STATUS_LABEL: Record<string, string> = {
   failed: 'Failed',
 };
 
-type ScrapeRunRow = {
-  id: string;
-  vendor: string;
-  mode: string;
-  status: string;
-  started_at: string;
-  ended_at: string | null;
-  rows_received: number;
-  locations_upserted: number;
-  products_upserted: number;
-  prices_inserted: number;
-  availability_writes: number;
-  errors: unknown;
-  fatal_error: string | null;
-};
-
 function formatDuration(startIso: string, endIso: string | null): string {
   if (!endIso) return '—';
   const start = new Date(startIso).getTime();
@@ -48,12 +32,7 @@ function formatDuration(startIso: string, endIso: string | null): string {
 export default async function ScrapeRunsPage() {
   const supabase = await createSupabaseServerClient();
 
-  // scrape_runs landed in migration 0024; gen-types hasn't been re-run yet,
-  // so the typed client doesn't know about it. Same cast idiom the
-  // /stores/[id]/locations page uses for store_locations.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sb = supabase as any;
-  const { data, error } = (await sb
+  const { data, error } = await supabase
     .from('scrape_runs')
     .select(
       `id, vendor, mode, status, started_at, ended_at, rows_received,
@@ -61,10 +40,7 @@ export default async function ScrapeRunsPage() {
        availability_writes, errors, fatal_error`,
     )
     .order('started_at', { ascending: false })
-    .limit(100)) as {
-    data: ScrapeRunRow[] | null;
-    error: { message: string } | null;
-  };
+    .limit(100);
 
   return (
     <div className="space-y-5">

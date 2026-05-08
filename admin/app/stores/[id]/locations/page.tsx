@@ -10,49 +10,26 @@ type PageProps = {
   params: Promise<{ id: string }>;
 };
 
-type StoreLocationRow = {
-  id: string;
-  store_id: string;
-  name: string;
-  external_id: string | null;
-  region: string;
-  is_active: boolean;
-  lat: number | null;
-  lng: number | null;
-  created_at: string;
-  updated_at: string;
-};
-
 export default async function StoreLocationsPage({ params }: PageProps) {
   const { id: storeId } = await params;
   const supabase = await createSupabaseServerClient();
 
-  // store_locations was added in migration 0019; until `supabase gen types
-  // typescript --linked` runs, the typed client doesn't know about it. We
-  // cast the builder and narrow back to a typed row — same idiom the Edge
-  // Functions use against not-yet-typed tables.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sb = supabase as any;
-  const [{ data: store, error: storeErr }, locationsRes] =
+  const [{ data: store, error: storeErr }, { data: locations, error: locErr }] =
     await Promise.all([
       supabase
         .from('stores')
         .select('id, name, region, is_active')
         .eq('id', storeId)
         .maybeSingle(),
-      sb
+      supabase
         .from('store_locations')
         .select(
           'id, store_id, name, external_id, region, is_active, lat, lng, created_at, updated_at',
         )
         .eq('store_id', storeId)
         .order('is_active', { ascending: false })
-        .order('name', { ascending: true }) as Promise<{
-        data: StoreLocationRow[] | null;
-        error: { message: string } | null;
-      }>,
+        .order('name', { ascending: true }),
     ]);
-  const { data: locations, error: locErr } = locationsRes;
 
   if (storeErr) {
     return (

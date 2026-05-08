@@ -257,9 +257,13 @@ export type Database = {
           id: string
           observed_at: string
           product_id: string
+          promo_label: string | null
           receipt_item_id: string | null
+          regular_amount_minor_units: number | null
+          sale_ends_at: string | null
           source: string
           store_id: string
+          store_location_id: string | null
         }
         Insert: {
           amount_minor_units: number
@@ -267,9 +271,13 @@ export type Database = {
           id?: string
           observed_at?: string
           product_id: string
+          promo_label?: string | null
           receipt_item_id?: string | null
+          regular_amount_minor_units?: number | null
+          sale_ends_at?: string | null
           source: string
           store_id: string
+          store_location_id?: string | null
         }
         Update: {
           amount_minor_units?: number
@@ -277,9 +285,13 @@ export type Database = {
           id?: string
           observed_at?: string
           product_id?: string
+          promo_label?: string | null
           receipt_item_id?: string | null
+          regular_amount_minor_units?: number | null
+          sale_ends_at?: string | null
           source?: string
           store_id?: string
+          store_location_id?: string | null
         }
         Relationships: [
           {
@@ -301,6 +313,13 @@ export type Database = {
             columns: ["store_id"]
             isOneToOne: false
             referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prices_store_location_id_fkey"
+            columns: ["store_location_id"]
+            isOneToOne: false
+            referencedRelation: "store_locations"
             referencedColumns: ["id"]
           },
         ]
@@ -339,23 +358,29 @@ export type Database = {
       }
       product_store_availability: {
         Row: {
+          id: string
           is_available: boolean
           product_id: string
           store_id: string
+          store_location_id: string | null
           updated_at: string
           updated_by: string | null
         }
         Insert: {
+          id?: string
           is_available?: boolean
           product_id: string
           store_id: string
+          store_location_id?: string | null
           updated_at?: string
           updated_by?: string | null
         }
         Update: {
+          id?: string
           is_available?: boolean
           product_id?: string
           store_id?: string
+          store_location_id?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -374,6 +399,13 @@ export type Database = {
             referencedRelation: "stores"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "product_store_availability_store_location_id_fkey"
+            columns: ["store_location_id"]
+            isOneToOne: false
+            referencedRelation: "store_locations"
+            referencedColumns: ["id"]
+          },
         ]
       }
       products: {
@@ -381,30 +413,45 @@ export type Database = {
           brand: string | null
           category: string | null
           created_at: string
+          description: string | null
           id: string
           image_skipped: boolean
           image_url: string | null
+          is_sold_by_weight: boolean
           name: string
+          unit_of_measure: string | null
+          unit_size: number | null
+          units_per_pack: number | null
           upc: string | null
         }
         Insert: {
           brand?: string | null
           category?: string | null
           created_at?: string
+          description?: string | null
           id?: string
           image_skipped?: boolean
           image_url?: string | null
+          is_sold_by_weight?: boolean
           name: string
+          unit_of_measure?: string | null
+          unit_size?: number | null
+          units_per_pack?: number | null
           upc?: string | null
         }
         Update: {
           brand?: string | null
           category?: string | null
           created_at?: string
+          description?: string | null
           id?: string
           image_skipped?: boolean
           image_url?: string | null
+          is_sold_by_weight?: boolean
           name?: string
+          unit_of_measure?: string | null
+          unit_size?: number | null
+          units_per_pack?: number | null
           upc?: string | null
         }
         Relationships: []
@@ -558,6 +605,117 @@ export type Database = {
           },
         ]
       }
+      scrape_runs: {
+        Row: {
+          availability_writes: number
+          ended_at: string | null
+          errors: Json
+          fatal_error: string | null
+          id: string
+          locations_upserted: number
+          mode: string
+          payload_size_bytes: number | null
+          prices_inserted: number
+          products_upserted: number
+          rows_received: number
+          started_at: string
+          status: string
+          triggered_by: string | null
+          vendor: string
+        }
+        Insert: {
+          availability_writes?: number
+          ended_at?: string | null
+          errors?: Json
+          fatal_error?: string | null
+          id?: string
+          locations_upserted?: number
+          mode: string
+          payload_size_bytes?: number | null
+          prices_inserted?: number
+          products_upserted?: number
+          rows_received?: number
+          started_at?: string
+          status?: string
+          triggered_by?: string | null
+          vendor: string
+        }
+        Update: {
+          availability_writes?: number
+          ended_at?: string | null
+          errors?: Json
+          fatal_error?: string | null
+          id?: string
+          locations_upserted?: number
+          mode?: string
+          payload_size_bytes?: number | null
+          prices_inserted?: number
+          products_upserted?: number
+          rows_received?: number
+          started_at?: string
+          status?: string
+          triggered_by?: string | null
+          vendor?: string
+        }
+        Relationships: []
+      }
+      store_locations: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          external_id: string | null
+          id: string
+          is_active: boolean
+          lat: number | null
+          lng: number | null
+          name: string
+          region: string
+          store_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          external_id?: string | null
+          id?: string
+          is_active?: boolean
+          lat?: number | null
+          lng?: number | null
+          name: string
+          region?: string
+          store_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          external_id?: string | null
+          id?: string
+          is_active?: boolean
+          lat?: number | null
+          lng?: number | null
+          name?: string
+          region?: string
+          store_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "store_locations_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "store_locations_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stores: {
         Row: {
           created_at: string
@@ -605,8 +763,12 @@ export type Database = {
           id: string | null
           observed_at: string | null
           product_id: string | null
+          promo_label: string | null
+          regular_amount_minor_units: number | null
+          sale_ends_at: string | null
           source: string | null
           store_id: string | null
+          store_location_id: string | null
         }
         Relationships: [
           {
@@ -621,6 +783,13 @@ export type Database = {
             columns: ["store_id"]
             isOneToOne: false
             referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prices_store_location_id_fkey"
+            columns: ["store_location_id"]
+            isOneToOne: false
+            referencedRelation: "store_locations"
             referencedColumns: ["id"]
           },
         ]
