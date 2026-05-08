@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState, useTransition } from 'react';
 
 import { renameStore, setStoreActive } from './actions';
@@ -100,6 +101,12 @@ export default function StoreRow({ store }: Props) {
         </div>
         {!editing && (
           <div className="flex items-center gap-3 shrink-0">
+            <Link
+              href={`/stores/${store.id}/locations`}
+              className="text-sm text-muted hover:text-text"
+            >
+              Locations
+            </Link>
             <button
               type="button"
               disabled={isPending}
