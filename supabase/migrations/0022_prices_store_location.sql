@@ -27,7 +27,16 @@ comment on column public.prices.store_location_id is
 -- Refresh `current_prices` to surface store_location_id alongside the latest
 -- observation. Existing consumers (mobile compare-sheet) read columns by name
 -- and ignore the new field; future admin location-detail views can use it.
-create or replace view public.current_prices as
+--
+-- DROP + CREATE rather than CREATE OR REPLACE: Postgres only lets the latter
+-- ADD columns at the END of the SELECT list. Inserting store_location_id
+-- next to its FK siblings (product_id, store_id) reads as renaming the
+-- third column to "store_location_id" and fails with SQLSTATE 42P16. The
+-- view has no SQL-level dependents (mobile + admin query it over the
+-- network), so dropping is safe.
+drop view if exists public.current_prices;
+
+create view public.current_prices as
   select distinct on (product_id, store_id)
     id,
     product_id,
