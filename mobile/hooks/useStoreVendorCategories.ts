@@ -8,11 +8,6 @@ export type StoreVendorCategoryRoot = {
   productCount: number;
 };
 
-type RawRow = {
-  vendor_path_root: string | null;
-  product_id: string | null;
-};
-
 // Top-level vendor categories for a store, with the count of distinct
 // products under each root. Drives the Browse "By store" tile grid.
 //
@@ -30,18 +25,11 @@ export function useStoreVendorCategories(storeId: string | null) {
     enabled: !!storeId,
     staleTime: 1000 * 60 * 5,
     queryFn: async (): Promise<StoreVendorCategoryRoot[]> => {
-      // REASON: `product_store_categories` lands in mobile/types/database.ts
-      // after `npx supabase gen types typescript --linked` runs against the
-      // 0025 migration. Until then, cast through `any` (same pattern admin
-      // uses for store_locations / scrape_runs in Session 19).
       // The (store_id, vendor_path_root) index covers this read.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (supabase as any)
+      const { data, error } = await supabase
         .from('product_store_categories')
         .select('vendor_path_root, product_id')
         .eq('store_id', storeId!);
-      const error = result.error;
-      const data = (result.data ?? null) as RawRow[] | null;
       if (error) throw error;
 
       const productsByRoot = new Map<string, Set<string>>();

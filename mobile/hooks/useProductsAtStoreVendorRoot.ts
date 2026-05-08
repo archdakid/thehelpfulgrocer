@@ -60,17 +60,14 @@ export function useProductsAtStoreVendorRoot(storeId: string | null, root: strin
     enabled: !!storeId && !!root,
     staleTime: 1000 * 60,
     queryFn: async (): Promise<StoreVendorProductRow[]> => {
-      // REASON: see useStoreVendorCategories — same pending types regen.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (supabase as any)
+      const { data, error } = await supabase
         .from('product_store_categories')
         .select(
           'product_id, vendor_path, products!inner(id, name, brand, image_url, category, current_prices(amount_minor_units, currency, store_id, stores(id, name)))',
         )
         .eq('store_id', storeId!)
-        .eq('vendor_path_root', root!);
-      const error = result.error;
-      const data = (result.data ?? null) as CategoryRow[] | null;
+        .eq('vendor_path_root', root!)
+        .returns<CategoryRow[]>();
       if (error) throw error;
 
       const seen = new Set<string>();

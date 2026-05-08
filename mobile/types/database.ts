@@ -408,6 +408,54 @@ export type Database = {
           },
         ]
       }
+      product_store_categories: {
+        Row: {
+          first_seen_at: string
+          id: string
+          last_seen_at: string
+          product_id: string
+          source: string
+          store_id: string
+          vendor_path: string
+          vendor_path_root: string
+        }
+        Insert: {
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          product_id: string
+          source?: string
+          store_id: string
+          vendor_path: string
+          vendor_path_root: string
+        }
+        Update: {
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          product_id?: string
+          source?: string
+          store_id?: string
+          vendor_path?: string
+          vendor_path_root?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_store_categories_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_store_categories_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       products: {
         Row: {
           brand: string | null
@@ -608,6 +656,7 @@ export type Database = {
       scrape_runs: {
         Row: {
           availability_writes: number
+          categories_writes: number
           ended_at: string | null
           errors: Json
           fatal_error: string | null
@@ -625,6 +674,7 @@ export type Database = {
         }
         Insert: {
           availability_writes?: number
+          categories_writes?: number
           ended_at?: string | null
           errors?: Json
           fatal_error?: string | null
@@ -642,6 +692,7 @@ export type Database = {
         }
         Update: {
           availability_writes?: number
+          categories_writes?: number
           ended_at?: string | null
           errors?: Json
           fatal_error?: string | null
