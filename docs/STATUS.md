@@ -3,7 +3,7 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-03** (end of Session 18d — admin product CRUD, bulk queue actions, prices/availability).
+Last updated: **2026-05-07** (end of Session 19 — F11 Phase 2 scraper ingest foundation, store hard-delete, locations CRUD).
 
 ---
 
@@ -115,6 +115,17 @@ Last updated: **2026-05-03** (end of Session 18d — admin product CRUD, bulk qu
 - [x] Edge Function `import-product-image` (`fetchCandidates` / `import` / `skip`): OFF candidate fetcher returns per-section image URLs (front, packaging, ingredients, nutrition); import downloads bytes into the `product-images` bucket and points `image_url` at the new URL (so mobile renders without an OFF round-trip and we're insulated from OFF mutating the source); skip flips the new column to suppress requeueing
 - [x] `/products/images` queue: lists products without an admin image and a real UPC, per-row Fetch candidates / Skip / inline candidate gallery with click-to-import. Header link from `/products` shows the queue count
 
+### Scraper ingest F11 Phase 2 — schema + ingest function + admin store/locations (Session 19)
+- [x] Migrations 0019–0024: `store_locations` (per-branch identity with `external_id`), products UOM/pack columns (`unit_size`, `unit_of_measure`, `is_sold_by_weight`, `units_per_pack`, `description`), `prices` sale columns (`regular_amount_minor_units`, `sale_ends_at`, `promo_label`), `prices.store_location_id` (nullable FK, ON DELETE SET NULL), `product_store_availability` extended with `store_location_id` + NULLS NOT DISTINCT natural key, `scrape_runs` audit table; extends `prices.source` and `product_aliases.source` enums to include `'scrape'`
+- [x] `ingest-scrape` Edge Function: anon-JWT admin re-check → service-role upserts of `store_locations` (on `store_id, external_id`), `products` (lookup by UPC then by vendor-namespaced alias, then insert; race-safe on 23505), `prices` (append-only with sale columns), `product_store_availability` (upsert on three-column natural key). Wraps everything in a `scrape_runs` row that flips to `success` / `partial` (per-row failures only, capped at 200) / `failed` (fatal). Per `docs/DECISIONS.md` 2026-05-07: vendor per-location vectors are flattened at the runner so this function only sees one uniform row shape.
+- [x] `manage-store` `delete` action: two-phase cascade preview across prices / availability / locations / receipts / circulars; `circulars.store_id` ON DELETE RESTRICT surfaces as a 409 instead of a raw 23503, with defense-in-depth on the actual delete.
+- [x] `DeleteStoreButton` + StoreRow wiring: inline cascade-preview modal with the type-the-name confirm gesture from product delete; "will be deleted / will be unlinked / blocks delete" sections.
+- [x] `manage-location` Edge Function: full CRUD (create / rename / set_active / delete), two-phase delete preview, same admin pattern.
+- [x] `/stores/[id]/locations` page + `NewLocationForm` / `LocationRow` / actions: branch list with active/inactive sections, optional vendor `external_id` and lat/lng on create, per-row Rename / Deactivate / Delete. Page casts around `store_locations` until `npx supabase gen types --local` reruns.
+- [x] Mobile `StorePicker`: filter inactive stores out of the pill row (admins can otherwise read inactive rows via the 0013 RLS policy).
+- [x] `manage-price` updated to target the new three-column natural key on `product_store_availability` (sends `store_location_id: null` for chain-wide admin writes).
+- [x] `.gitignore`: `scrapers/` subtree fully ignored — scripts AND data both stay out of repo. Codebase only sees the `ingest-scrape` HTTP boundary. DECISIONS.md updated with the policy and the runner-side flatten-vendor-vectors decision.
+
 ### Receipts F6 Phase 3 — matcher + price contribution + admin queue (Session 16c)
 - [x] Migration `0009_product_matching.sql`: enables `pg_trgm`, GIN trigram indexes on `lower(products.name)` and `lower(product_aliases.alias)`, new `product_aliases` table with source enum (`admin`/`receipt`/`manual`), and a `match_receipt_text(text)` SQL function returning the single best `(product_id, confidence)` above a 0.30 floor
 - [x] Migration `0010_flagged_items_and_price_link.sql`: `flagged_items` admin queue (reasons `unmatched` / `low_confidence` / `auto_created_product`, resolutions `confirmed` / `corrected` / `rejected` / `merged`, admin-only RLS), `prices.receipt_item_id` FK so contributed prices trace back to the line item that produced them
@@ -138,6 +149,7 @@ These are working code paths but stub behavior — they render, they don't do th
 
 - **Receipts tab** — Phases 1–3 shipped: upload, OCR, matching, price contribution, and admin queue. Items above 0.50 trigram similarity contribute `source='receipt'` rows to `prices`; below that they sit in the `flagged_items` queue. Unmatched-but-sane items auto-create products and still get queued.
 - **Admin panel F8 Phase 2** — Closed. Stores CRUD (18a), circular ingest (18b), flagged-item edits (18c), product CRUD + bulk queue + per-store prices/availability (18d), and product-image candidate review (18d) all shipped on `feature/admin-phase2-circulars`. `GOOGLE_AI_API_KEY` is already set as a function secret from the receipts pipeline — no new secret needed.
+- **Scraper ingest F11 Phase 2** — Schema and ingest function shipped on `feature/scraper-ingest-foundation`. The runner (out-of-repo per the 2026-05-07 DECISIONS entry) is the missing piece: per-vendor fetch + normalize that POSTs the unified row shape to `ingest-scrape`. Daily delta + weekly full catalog cadence per the 2026-05-05 entry. Three vendor scrapers (PriceSmart, SuperPharm, Massy) exist locally; deploying any of them requires a persistent VPS or dev-machine cron — not GitHub Actions.
 - **Scan tab** — stub. Real camera flow needs a dev build (per `CLAUDE.md` gotcha).
 - **Auth email confirmation** — sign-up surfaces a "check your email" message; the actual confirmation/redirect flow is whatever Supabase has configured for the project (no deep-link handler in the app yet).
 - **Browse "Often Bought" chips** — visual only; tap is a no-op TODO. Will wire when receipt history exists.
@@ -149,9 +161,11 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
-2. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
-3. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).
+1. **Scraper runner deployment** — picks a vendor (PriceSmart / SuperPharm / Massy), runs on a persistent VPS, posts to `ingest-scrape`. The schema, function, and audit table are in. Until the runner is deployed, prices stay receipt + admin-driven.
+2. **`npx supabase gen types --local > mobile/types/database.ts`** — bring the typed client up to date with migrations 0019–0024 so the `/stores/[id]/locations` page can drop its temporary cast. Hygiene before the next admin / mobile change touches `store_location_id`, `scrape_runs`, `regular_amount_minor_units`, etc.
+3. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
+4. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
+5. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).
 
 ---
 
@@ -199,7 +213,9 @@ main
                                                         └── feature/polish-browse
                                                             └── feature/polish-list
                                                                 └── feature/receipts-phase1
-                                                                    └── feature/admin-phase1  (current)
+                                                                    └── feature/admin-phase1
+                                                                        └── feature/admin-phase2-circulars
+                                                                            └── feature/scraper-ingest-foundation  (current)
 ```
 
 When ready to consolidate: merge each in order into `main`, or squash-merge groups (foundation → design pass → backend → features).

@@ -2,7 +2,7 @@ import Link from 'next/link';
 
 import { signOut } from '@/app/sign-in/actions';
 
-type NavKey = 'queue' | 'stores' | 'circulars' | 'products';
+type NavKey = 'queue' | 'stores' | 'circulars' | 'products' | 'scrape-runs';
 
 type Props = {
   email: string;
@@ -15,6 +15,7 @@ const NAV: Array<{ key: NavKey; label: string; href: string }> = [
   { key: 'circulars', label: 'Circulars', href: '/circulars' },
   { key: 'products', label: 'Products', href: '/products' },
   { key: 'stores', label: 'Stores', href: '/stores' },
+  { key: 'scrape-runs', label: 'Scrape runs', href: '/scrape-runs' },
 ];
 
 export default function AdminShell({ email, active, children }: Props) {

@@ -174,18 +174,23 @@ async function upsertAvailability(
   if (!product) return jsonError(404, 'Product not found');
   if (!store) return jsonError(404, 'Store not found');
 
+  // Natural key was extended to (product_id, store_id, store_location_id) in
+  // migration 0023 with NULLS NOT DISTINCT. Admin manual entries are
+  // chain-wide, so store_location_id is explicit-null here. The upsert
+  // targets the new three-column unique index.
   const { data, error } = await (admin.from('product_store_availability') as any)
     .upsert(
       {
         product_id: args.productId,
         store_id: args.storeId,
+        store_location_id: null,
         is_available: args.isAvailable,
         updated_at: new Date().toISOString(),
         updated_by: args.adminId,
       },
-      { onConflict: 'product_id,store_id' },
+      { onConflict: 'product_id,store_id,store_location_id' },
     )
-    .select('product_id, store_id, is_available, updated_at, updated_by')
+    .select('product_id, store_id, store_location_id, is_available, updated_at, updated_by')
     .single();
   if (error) return jsonError(500, error.message);
   return jsonOk({ ok: true, availability: data });
