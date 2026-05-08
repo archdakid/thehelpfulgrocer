@@ -121,7 +121,7 @@ Last updated: **2026-05-07** (end of Session 19 — F11 Phase 2 scraper ingest f
 - [x] `manage-store` `delete` action: two-phase cascade preview across prices / availability / locations / receipts / circulars; `circulars.store_id` ON DELETE RESTRICT surfaces as a 409 instead of a raw 23503, with defense-in-depth on the actual delete.
 - [x] `DeleteStoreButton` + StoreRow wiring: inline cascade-preview modal with the type-the-name confirm gesture from product delete; "will be deleted / will be unlinked / blocks delete" sections.
 - [x] `manage-location` Edge Function: full CRUD (create / rename / set_active / delete), two-phase delete preview, same admin pattern.
-- [x] `/stores/[id]/locations` page + `NewLocationForm` / `LocationRow` / actions: branch list with active/inactive sections, optional vendor `external_id` and lat/lng on create, per-row Rename / Deactivate / Delete. Page casts around `store_locations` until `npx supabase gen types --local` reruns.
+- [x] `/stores/[id]/locations` page + `NewLocationForm` / `LocationRow` / actions: branch list with active/inactive sections, optional vendor `external_id` and lat/lng on create, per-row Rename / Deactivate / Delete. Page casts around `store_locations` until `supabase gen types typescript --linked` reruns.
 - [x] Mobile `StorePicker`: filter inactive stores out of the pill row (admins can otherwise read inactive rows via the 0013 RLS policy).
 - [x] `manage-price` updated to target the new three-column natural key on `product_store_availability` (sends `store_location_id: null` for chain-wide admin writes).
 - [x] `.gitignore`: `scrapers/` subtree fully ignored — scripts AND data both stay out of repo. Codebase only sees the `ingest-scrape` HTTP boundary. DECISIONS.md updated with the policy and the runner-side flatten-vendor-vectors decision.
@@ -162,7 +162,7 @@ These are working code paths but stub behavior — they render, they don't do th
 Roughly in order of likely impact:
 
 1. **Scraper runner deployment** — picks a vendor (PriceSmart / SuperPharm / Massy), runs on a persistent VPS, posts to `ingest-scrape`. The schema, function, and audit table are in. Until the runner is deployed, prices stay receipt + admin-driven.
-2. **`npx supabase gen types --local > mobile/types/database.ts`** — bring the typed client up to date with migrations 0019–0024 so the `/stores/[id]/locations` page can drop its temporary cast. Hygiene before the next admin / mobile change touches `store_location_id`, `scrape_runs`, `regular_amount_minor_units`, etc.
+2. **`supabase gen types typescript --linked > mobile/types/database.ts`** — bring the typed client up to date with migrations 0019–0024 so the `/stores/[id]/locations` and `/scrape-runs` pages can drop their temporary casts. Hygiene before the next admin / mobile change touches `store_location_id`, `scrape_runs`, `regular_amount_minor_units`, etc.
 3. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
 4. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
 5. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).

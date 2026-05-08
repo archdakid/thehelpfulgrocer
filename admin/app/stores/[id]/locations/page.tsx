@@ -27,9 +27,9 @@ export default async function StoreLocationsPage({ params }: PageProps) {
   const { id: storeId } = await params;
   const supabase = await createSupabaseServerClient();
 
-  // store_locations was added in migration 0019; until `npx supabase gen
-  // types --local` runs, the typed client doesn't know about it. We cast
-  // the builder and narrow back to a typed row — same idiom the Edge
+  // store_locations was added in migration 0019; until `supabase gen types
+  // typescript --linked` runs, the typed client doesn't know about it. We
+  // cast the builder and narrow back to a typed row — same idiom the Edge
   // Functions use against not-yet-typed tables.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sb = supabase as any;
