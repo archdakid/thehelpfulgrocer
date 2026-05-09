@@ -8,11 +8,31 @@ import NutritionPanel from '@/components/product/NutritionPanel';
 import PriceComparisonRow from '@/components/product/PriceComparisonRow';
 import EmptyState from '@/components/ui/EmptyState';
 import { useOpenFoodFacts } from '@/hooks/useOpenFoodFacts';
-import { useProduct } from '@/hooks/useProduct';
+import { useProduct, type Product } from '@/hooks/useProduct';
 import { usePricesForProduct } from '@/hooks/usePricesForProduct';
 import { logger } from '@/lib/logger';
 import { resolveProductImage } from '@/lib/productImage';
 import { useThemedColors } from '@/lib/themedColors';
+
+// "500ml" / "Case of 24 · 330ml each" / "1 lb" — purely a header readout.
+// Returns null when the product has no UOM/pack info worth surfacing.
+function formatProductSize(product: Product): string | null {
+  const parts: string[] = [];
+  const size =
+    product.unit_size && product.unit_of_measure && product.unit_of_measure !== 'each'
+      ? `${product.unit_size}${product.unit_of_measure}`
+      : null;
+  if (product.units_per_pack && product.units_per_pack > 1) {
+    parts.push(`Case of ${product.units_per_pack}`);
+    if (size) parts.push(`${size} each`);
+  } else if (size) {
+    parts.push(size);
+  }
+  if (product.is_sold_by_weight && product.unit_of_measure) {
+    parts.push(`sold by ${product.unit_of_measure}`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -43,7 +63,12 @@ export default function ProductDetailScreen() {
   const isError = productQuery.isError || pricesQuery.isError;
   const error = productQuery.error ?? pricesQuery.error;
 
-  const cheapestId = pricesQuery.data?.[0]?.store.id;
+  // Cheapest = cheapest IN-STOCK row. usePricesForProduct sorts in-stock
+  // first, so the first available entry is the canonical "best price"
+  // target; if everything's out of stock, no row gets the badge.
+  const cheapestId = pricesQuery.data?.find((p) => p.isAvailable)?.store.id;
+  const product = productQuery.data;
+  const sizeLabel = product ? formatProductSize(product) : null;
 
   const resolvedImageUrl = resolveProductImage({
     offImageUrl: offQuery.data?.imageUrl ?? null,
@@ -91,7 +116,11 @@ export default function ProductDetailScreen() {
             data={pricesQuery.data ?? []}
             keyExtractor={(entry) => entry.store.id}
             renderItem={({ item }) => (
-              <PriceComparisonRow entry={item} isCheapest={item.store.id === cheapestId} />
+              <PriceComparisonRow
+                entry={item}
+                product={productQuery.data!}
+                isCheapest={item.store.id === cheapestId}
+              />
             )}
             ListHeaderComponent={
               <View className="px-4 pb-4">
@@ -110,6 +139,11 @@ export default function ProductDetailScreen() {
                 {productQuery.data.brand ? (
                   <Text className="text-body-sm text-secondary mt-0.5">
                     {productQuery.data.brand}
+                  </Text>
+                ) : null}
+                {sizeLabel ? (
+                  <Text className="text-caption text-tertiary mt-0.5">
+                    {sizeLabel}
                   </Text>
                 ) : null}
                 <Text className="text-h3 text-primary mt-6 mb-1">Prices</Text>
