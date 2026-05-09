@@ -1,11 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { fetchAllRows } from '@/lib/paginate';
 import { queryKeys } from '@/lib/queryKeys';
 import { supabase } from '@/lib/supabase';
 
 export type StoreVendorCategoryRoot = {
   root: string;
   productCount: number;
+};
+
+type RawRow = {
+  vendor_path_root: string | null;
+  product_id: string | null;
 };
 
 // Top-level vendor categories for a store, with the count of distinct
@@ -25,20 +31,21 @@ export function useStoreVendorCategories(storeId: string | null) {
     enabled: !!storeId,
     staleTime: 1000 * 60 * 5,
     queryFn: async (): Promise<StoreVendorCategoryRoot[]> => {
-      // The (store_id, vendor_path_root) index covers this read. The limit
-      // overrides PostgREST's default 1000-row cap which silently truncates
-      // for stores with large catalogs (SuperPharm has ~16k rows here =
-      // 11k products × ~1.5 paths each). Without it the by-store grid sees
-      // only whatever roots the first 1000 rows happen to cover.
-      const { data, error } = await supabase
-        .from('product_store_categories')
-        .select('vendor_path_root, product_id')
-        .eq('store_id', storeId!)
-        .limit(100000);
-      if (error) throw error;
+      // Pagination via fetchAllRows defends against PostgREST's server-side
+      // `db.max_rows` cap (default 1000) which silently truncates for stores
+      // with large catalogs (SuperPharm has ~16k rows here = 11k products ×
+      // ~1.5 paths each). Client-side `.limit(N)` is bounded by max_rows on
+      // the server, so we paginate via `.range()` instead. The
+      // (store_id, vendor_path_root) index covers each page.
+      const data = await fetchAllRows<RawRow>(() =>
+        supabase
+          .from('product_store_categories')
+          .select('vendor_path_root, product_id')
+          .eq('store_id', storeId!),
+      );
 
       const productsByRoot = new Map<string, Set<string>>();
-      for (const row of data ?? []) {
+      for (const row of data) {
         if (!row.vendor_path_root || !row.product_id) continue;
         let bucket = productsByRoot.get(row.vendor_path_root);
         if (!bucket) {

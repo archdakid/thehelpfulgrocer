@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { isCategoryId, type CategoryId } from '@/constants/categories';
+import { fetchAllRows } from '@/lib/paginate';
 import { queryKeys } from '@/lib/queryKeys';
 import { supabase } from '@/lib/supabase';
 
@@ -69,37 +70,38 @@ export function useProductsAtStoreVendorPath(
     enabled: !!storeId && !!root,
     staleTime: 1000 * 60,
     queryFn: async (): Promise<StoreVendorProductRow[]> => {
-      // .limit(50000) defends against PostgREST's default 1000-row cap;
-      // popular roots can exceed it once vendor catalogs land. The natural
-      // listing length (1000-2000 products per root) sits well below this.
-      let query = supabase
-        .from('product_store_categories')
-        .select(
-          'product_id, vendor_path, products!inner(id, name, brand, image_url, category, current_prices(amount_minor_units, currency, store_id, stores(id, name)))',
-        )
-        .eq('store_id', storeId!)
-        .eq('vendor_path_root', root!)
-        .limit(50000);
+      // Paginated via fetchAllRows. Popular roots (SP "School & Office"
+      // ~1360 products) push past PostgREST's `db.max_rows` server-side
+      // cap; client `.limit()` is bounded by it. Each page also pulls the
+      // embedded products + current_prices + stores join, which is the
+      // heaviest read in the by-store browse path.
+      const data = await fetchAllRows<CategoryRow>(() => {
+        let q = supabase
+          .from('product_store_categories')
+          .select(
+            'product_id, vendor_path, products!inner(id, name, brand, image_url, category, current_prices(amount_minor_units, currency, store_id, stores(id, name)))',
+          )
+          .eq('store_id', storeId!)
+          .eq('vendor_path_root', root!);
 
-      if (child) {
-        // Exact match on "root › child" + LIKE for descendants. PostgREST
-        // .or() takes comma-separated `column.op.value` pairs. Our paths
-        // never contain commas (the separator is ` › `) or like-wildcards
-        // (`%` / `_`), so the values pass through verbatim.
-        const exactPath = `${root}${PATH_SEPARATOR}${child}`;
-        const descendantsPattern = `${exactPath}${PATH_SEPARATOR}%`;
-        query = query.or(
-          `vendor_path.eq.${exactPath},vendor_path.like.${descendantsPattern}`,
-        );
-      }
-
-      const { data, error } = await query.returns<CategoryRow[]>();
-      if (error) throw error;
+        if (child) {
+          // Exact match on "root › child" + LIKE for descendants. PostgREST
+          // .or() takes comma-separated `column.op.value` pairs. Our paths
+          // never contain commas (the separator is ` › `) or like-wildcards
+          // (`%` / `_`), so the values pass through verbatim.
+          const exactPath = `${root}${PATH_SEPARATOR}${child}`;
+          const descendantsPattern = `${exactPath}${PATH_SEPARATOR}%`;
+          q = q.or(
+            `vendor_path.eq.${exactPath},vendor_path.like.${descendantsPattern}`,
+          );
+        }
+        return q;
+      });
 
       const seen = new Set<string>();
       const rows: StoreVendorProductRow[] = [];
 
-      for (const item of data ?? []) {
+      for (const item of data) {
         const product = item.products;
         if (!product) continue;
         if (seen.has(product.id)) continue;
