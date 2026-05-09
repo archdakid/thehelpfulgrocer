@@ -4,6 +4,8 @@ import { notFound } from 'next/navigation';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { formatMoney, reasonLabel, reasonTone } from '@/lib/format';
+import PotentialDuplicateActions from './PotentialDuplicateActions';
+import PotentialDuplicateView from './PotentialDuplicateView';
 import ResolveActions from './ResolveActions';
 
 type Props = {
@@ -14,8 +16,12 @@ export default async function QueueDetailPage({ params }: Props) {
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
-  const { data: flag, error } = await supabase
-    .from('flagged_items')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // REASON: `flagged_items.match_score / flagged_product_id /
+  // candidate_product_id` (migration 0026) haven't landed in types yet
+  // until `gen types --linked` runs. Same Session-20 cast pattern as the
+  // scrape_runs page used.
+  const { data: flag, error } = await (supabase.from('flagged_items') as any)
     .select(
       `
         id,
@@ -24,11 +30,20 @@ export default async function QueueDetailPage({ params }: Props) {
         resolved_at,
         resolution,
         created_at,
+        match_score,
         auto_created_product_id,
+        flagged_product_id,
+        candidate_product_id,
         auto_created_product:products!flagged_items_auto_created_product_id_fkey (
           id, name, brand, category, image_url
         ),
-        receipt_item:receipt_items!inner (
+        flagged_product:products!flagged_items_flagged_product_id_fkey (
+          id, name, brand, category, image_url, unit_size, unit_of_measure, units_per_pack, description
+        ),
+        candidate_product:products!flagged_items_candidate_product_id_fkey (
+          id, name, brand, category, image_url, unit_size, unit_of_measure, units_per_pack, description
+        ),
+        receipt_item:receipt_items (
           id,
           raw_text,
           quantity,
@@ -38,7 +53,7 @@ export default async function QueueDetailPage({ params }: Props) {
           matched_product:products!receipt_items_matched_product_id_fkey (
             id, name, brand, image_url
           ),
-          receipt:receipts!inner (
+          receipt:receipts (
             id,
             currency,
             captured_at,
@@ -60,7 +75,50 @@ export default async function QueueDetailPage({ params }: Props) {
       </div>
     );
   }
-  if (!flag || !flag.receipt_item || !flag.receipt_item.receipt) notFound();
+  if (!flag) notFound();
+
+  // potential_duplicate is the ingest-origin path — no receipt context, just
+  // two `products` rows side-by-side. Branch out before the receipt-required
+  // code below tries to pull a non-existent receipt image.
+  if (flag.reason === 'potential_duplicate') {
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center gap-3">
+          <Link href="/queue" className="text-sm text-accent hover:underline">
+            ← Back to queue
+          </Link>
+          <span className={`text-[11px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded ${reasonTone(flag.reason)}`}>
+            {reasonLabel(flag.reason)}
+          </span>
+          {flag.match_score != null ? (
+            <span className="text-xs text-muted tabular-nums">
+              similarity {Number(flag.match_score).toFixed(3)}
+            </span>
+          ) : null}
+          {flag.resolved_at ? (
+            <span className="text-xs text-muted">resolved · {flag.resolution}</span>
+          ) : null}
+        </div>
+
+        <PotentialDuplicateView
+          flagged={flag.flagged_product as never}
+          candidate={flag.candidate_product as never}
+        />
+
+        <PotentialDuplicateActions
+          flaggedItemId={flag.id}
+          flaggedProductId={flag.flagged_product_id}
+          candidateProductId={flag.candidate_product_id}
+          candidateProductName={
+            (flag.candidate_product as { name?: string } | null)?.name ?? null
+          }
+          resolved={Boolean(flag.resolved_at)}
+        />
+      </div>
+    );
+  }
+
+  if (!flag.receipt_item || !flag.receipt_item.receipt) notFound();
 
   const item = flag.receipt_item;
   const receipt = item.receipt;

@@ -10,6 +10,7 @@ type Props = {
 
 const REASON_TABS: Array<{ key: string; label: string }> = [
   { key: 'all', label: 'All' },
+  { key: 'potential_duplicate', label: 'Potential duplicates' },
   { key: 'unmatched', label: 'Unmatched' },
   { key: 'low_confidence', label: 'Low confidence' },
   { key: 'auto_created_product', label: 'Auto-created' },
@@ -21,22 +22,34 @@ export default async function QueueListPage({ searchParams }: Props) {
 
   const supabase = await createSupabaseServerClient();
 
-  // Embed disambiguation: receipt_items has TWO FKs to products
-  // (matched_product_id), and flagged_items has its own
-  // (auto_created_product_id). Postgrest needs the FK name to pick the
-  // right join.
-  let query = supabase
-    .from('flagged_items')
+  // Embed disambiguation: flagged_items has multiple FKs to products
+  // (auto_created_product_id, flagged_product_id, candidate_product_id),
+  // and receipt_items has its own (matched_product_id). Postgrest needs
+  // the FK name to pick the right join. The receipt_item embed is a LEFT
+  // JOIN now (no `!inner`) so ingest-origin potential_duplicate rows
+  // (receipt_item_id null) load alongside receipt-origin rows.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // REASON: 0026's columns + FK relationships are in the DB but not in the
+  // generated types yet. Cast through `any` so the typed select doesn't
+  // collapse the result to a SelectQueryError.
+  let query = (supabase.from('flagged_items') as any)
     .select(
       `
         id,
         reason,
+        match_score,
         created_at,
         auto_created_product_id,
         auto_created_product:products!flagged_items_auto_created_product_id_fkey (
           id, name
         ),
-        receipt_item:receipt_items!inner (
+        flagged_product:products!flagged_items_flagged_product_id_fkey (
+          id, name, brand
+        ),
+        candidate_product:products!flagged_items_candidate_product_id_fkey (
+          id, name, brand
+        ),
+        receipt_item:receipt_items (
           id,
           raw_text,
           quantity,
@@ -45,7 +58,7 @@ export default async function QueueListPage({ searchParams }: Props) {
           matched_product:products!receipt_items_matched_product_id_fkey (
             id, name
           ),
-          receipt:receipts!inner (
+          receipt:receipts (
             id,
             currency,
             captured_at,

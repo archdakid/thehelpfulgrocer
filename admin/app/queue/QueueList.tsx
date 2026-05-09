@@ -13,8 +13,11 @@ import { resolveFlaggedItemsBulk } from './actions';
 // without catching real bugs (the server query is the source of truth).
 export type QueueRow = {
   id: string;
-  reason: 'unmatched' | 'low_confidence' | 'auto_created_product';
+  reason: 'unmatched' | 'low_confidence' | 'auto_created_product' | 'potential_duplicate';
+  match_score: number | null;
   auto_created_product: { id: string; name: string } | null;
+  flagged_product: { id: string; name: string; brand: string | null } | null;
+  candidate_product: { id: string; name: string; brand: string | null } | null;
   receipt_item: {
     id: string;
     raw_text: string;
@@ -44,11 +47,16 @@ export default function QueueList({ rows }: Props) {
   const selectedCount = selectedIds.length;
 
   // "Verify selected" maps to `confirm`, which the Edge Function rejects
-  // for `unmatched` (no matched_product to confirm). Disable the button
-  // when any selected row is unmatched so the admin doesn't get a wall
-  // of partial-failure errors.
-  const hasUnmatchedSelected = useMemo(
-    () => rows.some((r) => selected.has(r.id) && r.reason === 'unmatched'),
+  // for `unmatched` and `potential_duplicate` (no shared semantics across
+  // those reasons). Disable when any selected row is one of those so the
+  // admin doesn't get a wall of partial-failure errors.
+  const hasUnverifiableSelected = useMemo(
+    () =>
+      rows.some(
+        (r) =>
+          selected.has(r.id) &&
+          (r.reason === 'unmatched' || r.reason === 'potential_duplicate'),
+      ),
     [rows, selected],
   );
 
@@ -123,13 +131,13 @@ export default function QueueList({ rows }: Props) {
           <span>{allVisibleSelected ? 'Deselect all' : 'Select all'}</span>
         </li>
         {rows.map((row) => {
-          const item = row.receipt_item;
-          const receipt = item?.receipt;
-          const store = receipt?.store?.name ?? 'Unknown store';
-          const matched =
-            row.auto_created_product?.name ?? item?.matched_product?.name ?? null;
           const tone = reasonTone(row.reason);
           const isSelected = selected.has(row.id);
+
+          // Two render shapes by origin:
+          //   - potential_duplicate (ingest): "Flagged X vs Candidate Y · score"
+          //   - everything else (receipt): "raw_text · store · matched"
+          const isDup = row.reason === 'potential_duplicate';
 
           return (
             <li key={row.id} className={`flex items-stretch ${isSelected ? 'bg-bg' : 'hover:bg-bg'}`}>
@@ -138,7 +146,11 @@ export default function QueueList({ rows }: Props) {
                   type="checkbox"
                   checked={isSelected}
                   onChange={() => toggleOne(row.id)}
-                  aria-label={`Select ${item?.raw_text ?? row.id}`}
+                  aria-label={`Select ${
+                    isDup
+                      ? row.flagged_product?.name ?? row.id
+                      : row.receipt_item?.raw_text ?? row.id
+                  }`}
                   className="h-4 w-4 accent-accent cursor-pointer"
                 />
               </label>
@@ -149,19 +161,11 @@ export default function QueueList({ rows }: Props) {
                   >
                     {reasonLabel(row.reason)}
                   </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{item?.raw_text}</p>
-                    <p className="text-xs text-muted mt-0.5 truncate">
-                      {store}
-                      {matched ? ` · matched: ${matched}` : ''}
-                      {item?.match_confidence != null
-                        ? ` · score ${item.match_confidence.toFixed(2)}`
-                        : ''}
-                    </p>
-                  </div>
-                  <div className="text-sm tabular-nums text-text shrink-0 pr-4">
-                    {formatMoney(item?.line_total_minor_units ?? 0, receipt?.currency ?? 'TTD')}
-                  </div>
+                  {isDup ? (
+                    <DupRow row={row} />
+                  ) : (
+                    <ReceiptRow row={row} />
+                  )}
                 </div>
               </Link>
             </li>
@@ -213,10 +217,10 @@ export default function QueueList({ rows }: Props) {
             <button
               type="button"
               onClick={() => submit('confirm')}
-              disabled={isPending || hasUnmatchedSelected}
+              disabled={isPending || hasUnverifiableSelected}
               title={
-                hasUnmatchedSelected
-                  ? 'Unmatched items can\'t be verified — open them to pick a product or use Reject'
+                hasUnverifiableSelected
+                  ? 'Unmatched / potential-duplicate items can\'t be bulk-verified — open them individually or use Reject'
                   : undefined
               }
               className="bg-accent text-white rounded px-3 py-1.5 text-sm font-medium hover:opacity-90 disabled:opacity-50"
@@ -227,5 +231,54 @@ export default function QueueList({ rows }: Props) {
         </div>
       ) : null}
     </>
+  );
+}
+
+function ReceiptRow({ row }: { row: QueueRow }) {
+  const item = row.receipt_item;
+  const receipt = item?.receipt;
+  const store = receipt?.store?.name ?? 'Unknown store';
+  const matched =
+    row.auto_created_product?.name ?? item?.matched_product?.name ?? null;
+  return (
+    <>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">{item?.raw_text}</p>
+        <p className="text-xs text-muted mt-0.5 truncate">
+          {store}
+          {matched ? ` · matched: ${matched}` : ''}
+          {item?.match_confidence != null
+            ? ` · score ${item.match_confidence.toFixed(2)}`
+            : ''}
+        </p>
+      </div>
+      <div className="text-sm tabular-nums text-text shrink-0 pr-4">
+        {formatMoney(item?.line_total_minor_units ?? 0, receipt?.currency ?? 'TTD')}
+      </div>
+    </>
+  );
+}
+
+function DupRow({ row }: { row: QueueRow }) {
+  const flagged = row.flagged_product;
+  const candidate = row.candidate_product;
+  const score = row.match_score;
+  return (
+    <div className="flex-1 min-w-0">
+      <p className="text-sm truncate">
+        <span className="font-medium">
+          {flagged?.brand ? `${flagged.brand} · ` : ''}
+          {flagged?.name ?? '<deleted>'}
+        </span>
+        <span className="text-muted"> ↔ </span>
+        <span className="font-medium">
+          {candidate?.brand ? `${candidate.brand} · ` : ''}
+          {candidate?.name ?? '<deleted>'}
+        </span>
+      </p>
+      <p className="text-xs text-muted mt-0.5">
+        {score != null ? `similarity ${Number(score).toFixed(3)}` : 'no score'}
+      </p>
+    </div>
   );
 }

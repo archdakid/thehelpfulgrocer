@@ -4,7 +4,12 @@ import { revalidatePath } from 'next/cache';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
-type ResolveAction = 'confirm' | 'correct' | 'reject' | 'merge';
+type ResolveAction =
+  | 'confirm'
+  | 'correct'
+  | 'reject'
+  | 'merge'
+  | 'merge_duplicate';
 
 // Mirror of the Edge Function's Edits shape. `null` on a nullable field
 // means "explicitly clear it"; absence means "leave alone." Brand and

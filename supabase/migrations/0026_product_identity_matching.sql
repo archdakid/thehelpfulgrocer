@@ -301,3 +301,84 @@ $$;
 
 revoke all on function public.merge_products(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.merge_products(uuid, uuid) to service_role;
+
+-- =============================================================================
+-- backfill_potential_duplicates(min_score)
+--
+-- One-shot operational tool for the existing catalog. The matcher tier in
+-- ingest-scrape only fires on NEW inserts; products that landed before the
+-- matcher was wired (SuperPharm/Massy/PriceSmart's first ingests) are
+-- island rows that need surfacing as flagged_items.
+--
+-- For each product not already involved in an unresolved potential_duplicate
+-- row, run match_existing_product against the rest of the catalog and file
+-- a flag if the top hit clears the threshold. Idempotent: reruns are safe
+-- because the partial unique index on
+-- (flagged_product_id, candidate_product_id, reason) WHERE receipt_item_id
+-- IS NULL drops re-flags.
+--
+-- Usage (admin-only, run via Supabase SQL editor or scheduled job):
+--     select * from public.backfill_potential_duplicates();
+--     -- or with a stricter floor:
+--     select * from public.backfill_potential_duplicates(0.6);
+--
+-- Returns (scanned, flagged) counts.
+-- =============================================================================
+
+create or replace function public.backfill_potential_duplicates(
+  p_min_score numeric default 0.5
+)
+returns table (scanned integer, flagged integer)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_scanned int := 0;
+  v_flagged int := 0;
+  rec record;
+  match_rec record;
+begin
+  for rec in
+    select id, name, brand, unit_size, unit_of_measure
+    from public.products p
+    where not exists (
+      select 1 from public.flagged_items f
+      where f.reason = 'potential_duplicate'
+        and f.resolved_at is null
+        and (f.flagged_product_id = p.id or f.candidate_product_id = p.id)
+    )
+  loop
+    v_scanned := v_scanned + 1;
+    select *
+    into match_rec
+    from public.match_existing_product(
+      rec.name, rec.brand, rec.unit_size, rec.unit_of_measure, rec.id
+    )
+    where similarity >= p_min_score
+      and (same_size or same_brand)
+    order by similarity desc
+    limit 1;
+
+    if found then
+      insert into public.flagged_items (
+        receipt_item_id, flagged_product_id, candidate_product_id, reason, match_score
+      ) values (
+        null, rec.id, match_rec.product_id, 'potential_duplicate', match_rec.similarity
+      )
+      on conflict (flagged_product_id, candidate_product_id, reason)
+        where receipt_item_id is null
+        do nothing;
+      v_flagged := v_flagged + 1;
+    end if;
+  end loop;
+  return query select v_scanned, v_flagged;
+end;
+$$;
+
+-- service_role only — admin runs this via Supabase SQL editor (which uses
+-- service-role) or via a future Edge Function. Granting to `authenticated`
+-- would let any signed-in user trigger a catalog-wide rewrite via SECURITY
+-- DEFINER bypass.
+revoke all on function public.backfill_potential_duplicates(numeric) from public, anon, authenticated;
+grant execute on function public.backfill_potential_duplicates(numeric) to service_role;
