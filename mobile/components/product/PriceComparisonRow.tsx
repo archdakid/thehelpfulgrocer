@@ -29,9 +29,16 @@ export default function PriceComparisonRow({
   const muted = !entry.isAvailable;
 
   // Out-of-stock takes precedence over best-price; you can't claim "best" on
-  // a row the user can't actually buy.
+  // a row the user can't actually buy. When per-branch data narrows it to
+  // a partial picture (e.g. "in stock at 3 of 11"), surface that instead of
+  // a flat OOS pill.
+  const branch = entry.branchAvailability;
+  const partialStock =
+    !muted && branch != null && branch.available < branch.total;
   const badge = muted
-    ? { label: 'Out of stock', variant: 'danger' as const }
+    ? { label: branch ? `Out of stock at all ${branch.total} branches` : 'Out of stock', variant: 'danger' as const }
+    : partialStock && branch
+    ? { label: `In stock at ${branch.available} of ${branch.total}`, variant: 'warning' as const }
     : isCheapest
     ? { label: 'Best price', variant: 'accent' as const }
     : null;

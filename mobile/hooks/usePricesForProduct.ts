@@ -19,11 +19,22 @@ export type PriceAtStore = {
   // Per-store stock (migration 0017 + 0023). Default-when-absent: true
   // (no row at any specificity = available).
   isAvailable: boolean;
+  // Branch breakdown when the chain has per-location availability data
+  // (scraper writes one row per branch per product). Null when no per-
+  // branch rows exist — admin manual writes are chain-wide and don't
+  // populate this. UI surfaces "X of N locations" when present.
+  branchAvailability: { available: number; total: number } | null;
 };
 
 type AvailabilityRow = {
   store_id: string | null;
+  store_location_id: string | null;
   is_available: boolean | null;
+};
+
+type StoreAvailability = {
+  isAvailable: boolean;
+  branchAvailability: { available: number; total: number } | null;
 };
 
 export function usePricesForProduct(productId: string) {
@@ -31,9 +42,10 @@ export function usePricesForProduct(productId: string) {
     queryKey: queryKeys.pricesForProduct(productId),
     queryFn: async (): Promise<PriceAtStore[]> => {
       // Two cheap reads in parallel: the price view (with sale columns) and
-      // the availability table for chain-wide rows. Out-of-stock semantics
-      // require both — joining inside PostgREST is awkward because we only
-      // want store_location_id IS NULL availability and an outer join.
+      // every availability row for this product across both chain-wide
+      // (store_location_id NULL) and per-branch (set) writes. We aggregate
+      // client-side because PostgREST can't express "chain-wide if present
+      // else any-available across branches" in one filter expression.
       const [pricesRes, availabilityRes] = await Promise.all([
         supabase
           .from('current_prices')
@@ -43,19 +55,14 @@ export function usePricesForProduct(productId: string) {
           .eq('product_id', productId),
         supabase
           .from('product_store_availability')
-          .select('store_id, is_available')
+          .select('store_id, store_location_id, is_available')
           .eq('product_id', productId)
-          .is('store_location_id', null)
           .returns<AvailabilityRow[]>(),
       ]);
       if (pricesRes.error) throw pricesRes.error;
       if (availabilityRes.error) throw availabilityRes.error;
 
-      const availability = new Map<string, boolean>();
-      for (const row of availabilityRes.data ?? []) {
-        if (!row.store_id) continue;
-        availability.set(row.store_id, row.is_available !== false);
-      }
+      const availability = aggregateAvailability(availabilityRes.data ?? []);
 
       const rows: PriceAtStore[] = [];
       for (const row of pricesRes.data ?? []) {
@@ -66,6 +73,12 @@ export function usePricesForProduct(productId: string) {
           !row.observed_at ||
           !row.source
         ) continue;
+        // Default: chain-wide assumed in stock (0017 semantics) and no
+        // branch breakdown to surface.
+        const storeAvail = availability.get(row.stores.id) ?? {
+          isAvailable: true,
+          branchAvailability: null,
+        };
         rows.push({
           store: row.stores,
           amountMinorUnits: row.amount_minor_units,
@@ -75,10 +88,8 @@ export function usePricesForProduct(productId: string) {
           regularAmountMinorUnits: row.regular_amount_minor_units,
           saleEndsAt: row.sale_ends_at,
           promoLabel: row.promo_label,
-          // Default-true: absence of an availability row means "we haven't
-          // recorded otherwise, assume in stock". Same semantics 0017
-          // committed to.
-          isAvailable: availability.get(row.stores.id) ?? true,
+          isAvailable: storeAvail.isAvailable,
+          branchAvailability: storeAvail.branchAvailability,
         });
       }
 
@@ -92,4 +103,47 @@ export function usePricesForProduct(productId: string) {
       return rows;
     },
   });
+}
+
+// Per-store availability: chain-wide (store_location_id NULL) wins when
+// present (admin manual override); otherwise the chain is "available" if
+// ANY branch is available. The branch-count breakdown is reported when only
+// per-branch rows exist (mixed admin + scraper data isn't a real scenario
+// today, but if it happens the chain-wide intent dominates).
+function aggregateAvailability(rows: AvailabilityRow[]): Map<string, StoreAvailability> {
+  type Acc = {
+    chainWide: boolean | null;
+    branchTotal: number;
+    branchAvailable: number;
+  };
+  const acc = new Map<string, Acc>();
+
+  for (const row of rows) {
+    if (!row.store_id) continue;
+    let bucket = acc.get(row.store_id);
+    if (!bucket) {
+      bucket = { chainWide: null, branchTotal: 0, branchAvailable: 0 };
+      acc.set(row.store_id, bucket);
+    }
+    const isAvailable = row.is_available !== false;
+    if (row.store_location_id == null) {
+      bucket.chainWide = isAvailable;
+    } else {
+      bucket.branchTotal++;
+      if (isAvailable) bucket.branchAvailable++;
+    }
+  }
+
+  const out = new Map<string, StoreAvailability>();
+  for (const [storeId, b] of acc) {
+    if (b.chainWide != null) {
+      out.set(storeId, { isAvailable: b.chainWide, branchAvailability: null });
+    } else if (b.branchTotal > 0) {
+      out.set(storeId, {
+        isAvailable: b.branchAvailable > 0,
+        branchAvailability: { available: b.branchAvailable, total: b.branchTotal },
+      });
+    }
+  }
+  return out;
 }
