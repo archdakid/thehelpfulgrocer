@@ -562,6 +562,46 @@ A formal `vendor_categories` reference table (deduping paths and offering admin 
 
 ---
 
+## 2026-05-09 — Caribbean UPC unreliability; cross-vendor matching is fuzzy + admin-curated
+
+**Context:** The original `ingest-scrape` design (2026-05-05 entry) leaned on UPC as the cross-vendor identity tier: vendors send `product.upc`, the function looks up an existing `products` row by UPC, otherwise inserts new. That implicitly assumed UPCs would be stable across the three primary vendors. After looking at real scrape data:
+
+- **SuperPharm**: SKUs are internal product numbers (`413031517`). No UPC field in the API.
+- **Massy**: SKUs are 13-digit numeric strings (`0084960708010`) that *look* like EAN-13s but are not actual GTINs — verified by physically comparing one purchased item's barcode to its Massy SKU. Caribbean retailers commonly assign their own internal codes that follow EAN-13 format conventions.
+- **PriceSmart**: Enriched data (2,898 products) contains zero UPC/GTIN/EAN/barcode attributes anywhere. The `attributes` blob carries pricing, weights, descriptions, sale state — no product GTINs at all.
+
+The Caribbean retail reality: many products are region-exclusive with locally-assigned codes; even universal-brand items rarely surface their global UPC through the vendor APIs we have access to.
+
+**Decision:** Drop UPC as the primary cross-vendor matching tier. Identity is established via fuzzy matching + admin curation. Vendor SKUs are NEVER promoted to `products.upc` — each goes in as `INTERNAL-<VENDOR>-<sku>` (existing convention) and identity is established by other means.
+
+The matching problem splits into two:
+
+1. **Identity match** (same physical item across stores): trigram on `lower(brand || ' ' || name)` plus `unit_size`/`unit_of_measure` discriminators, run inside `ingest-scrape` after UPC and vendor-alias misses. Auto-link at high confidence (target ≥0.85), flag for admin review at medium (target 0.60–0.85, new `flagged_items` reason `potential_duplicate`), insert new below. Thresholds tuned against real flagged dupes once all three vendors have ingested.
+
+2. **Pack-variant equivalence** (same physical item, different pack sizes — Massy single can vs PriceSmart case-of-24): a separate `product_equivalents(product_id, equivalent_product_id, scale_factor)` table. Admin-curated, trigram-suggested via "case" / "pack" / "x-pack" patterns. Compare-sheet pulls equivalents and divides by `scale_factor` for per-unit comparability. `units_per_pack` stays on `products` (each pack variant is its own product, per 2026-05-05); the new table bridges them.
+
+**Reasoning:**
+
+- UPC-based matching is the gold standard globally but doesn't apply here. Pretending otherwise (e.g. promoting Massy's 13-digit SKUs to UPC) would silently merge unrelated products — false positives in catalog identity poison the compare-sheet for every user.
+- Identity and pack-equivalence are conceptually distinct and shouldn't share the same mechanism. Auto-merging "1 can" with "24-pack" loses the pack-size info we need to render per-can math, and the two SKUs would fight for one `units_per_pack` value.
+- Trigram + admin queue mirrors the receipts pipeline (DECISIONS.md 2026-05-01). One mental model for "machine guesses, human resolves."
+- A `product_equivalents` table was deferred on 2026-05-05 with the reasoning that "the compare-sheet can render the same comparison at display time" via `units_per_pack`. That assumed *one product per pack variant with full UOM data on the product*. It works for "case of 24 → $4.58/can" within one store, but it does NOT bridge the cross-store case where Massy sells the single SKU and PriceSmart sells the case SKU. Reopening the equivalence table is the cleanest path.
+- Conservative auto-link threshold: false positives are asymmetrically costly compared to false negatives. A wrong cross-store merge surfaces the wrong store's price publicly; a missed merge just means admin has to click one extra time. Tighten over time as confidence grows.
+
+**Sequencing:**
+
+1. Massy + PriceSmart ingest as fragmented catalogs (no auto-link tier yet). Receipt data already routes through trigram matching, so receipt-attributed products do consolidate naturally.
+2. Identity-match milestone: trigram tier + `potential_duplicate` `flagged_items` reason + admin merge UI extending `/queue`.
+3. Pack-variant milestone: `product_equivalents` migration, admin link UI (with trigram suggester), compare-sheet pulls equivalent rows with per-unit math.
+
+**Trade-offs accepted:**
+
+- Until milestone 2, every Massy and PriceSmart product is a separate row from its SuperPharm/admin-seeded equivalent even when they're physically identical. Compare-sheet shows one store per product. This is honest for region-exclusive items and misleading for the universal-brand minority — admin merges close the gap.
+- Tuning the threshold from cold is hard; we accept some flagging churn while real data accumulates.
+- `product_equivalents` introduces a new admin-curated table with no auto-population path. Trigram suggester reduces but does not eliminate the curation cost. Acceptable — equivalents are inherently a small set (case-of-N variants per item) and the compare-sheet payoff is high per linked pair.
+
+---
+
 ## Template for future entries
 
 ```markdown
