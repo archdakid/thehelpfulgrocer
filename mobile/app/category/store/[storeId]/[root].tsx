@@ -1,14 +1,18 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, PackageOpen, Tag, WifiOff } from 'lucide-react-native';
-import { useMemo } from 'react';
-import { ActivityIndicator, FlatList, Pressable, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import CategoryProductRow from '@/components/browse/CategoryProductRow';
 import EmptyState from '@/components/ui/EmptyState';
 import { isCategoryId } from '@/constants/categories';
-import { useProductsAtStoreVendorRoot, type StoreVendorProductRow } from '@/hooks/useProductsAtStoreVendorRoot';
+import {
+  useProductsAtStoreVendorPath,
+  type StoreVendorProductRow,
+} from '@/hooks/useProductsAtStoreVendorRoot';
 import { useStores } from '@/hooks/useStores';
+import { useStoreVendorCategoryTree } from '@/hooks/useStoreVendorCategoryTree';
 import { logger } from '@/lib/logger';
 import { useThemedColors } from '@/lib/themedColors';
 import { useListStore } from '@/stores/useListStore';
@@ -33,7 +37,13 @@ export default function StoreVendorCategoryScreen() {
   const { data: stores } = useStores();
   const items = useListStore((s) => s.items);
   const addProductItem = useListStore((s) => s.addProductItem);
-  const productsQuery = useProductsAtStoreVendorRoot(storeId, root);
+
+  // null = "All" chip selected (everything under root); otherwise filter to
+  // products at "root › child" or its descendants.
+  const [selectedChild, setSelectedChild] = useState<string | null>(null);
+
+  const treeQuery = useStoreVendorCategoryTree(storeId, root);
+  const productsQuery = useProductsAtStoreVendorPath(storeId, root, selectedChild);
 
   const inListIds = useMemo(() => {
     const set = new Set<string>();
@@ -42,9 +52,10 @@ export default function StoreVendorCategoryScreen() {
   }, [items]);
 
   if (productsQuery.isError) {
-    logger.error('useProductsAtStoreVendorRoot failed', {
+    logger.error('useProductsAtStoreVendorPath failed', {
       storeId,
       root,
+      child: selectedChild,
       error: productsQuery.error,
     });
   }
@@ -63,6 +74,11 @@ export default function StoreVendorCategoryScreen() {
 
   const storeName = stores?.find((s) => s.id === storeId)?.name ?? 'this store';
   const products = productsQuery.data ?? [];
+  const tree = treeQuery.data;
+  // Show chips only when we have at least one subcategory worth navigating
+  // into. Single-segment paths (e.g. PriceSmart's flat "Groceries") collapse
+  // to a flat product list — chips would be a single useless "All".
+  const showChips = !!tree && tree.children.length > 0;
 
   return (
     <>
@@ -94,14 +110,27 @@ export default function StoreVendorCategoryScreen() {
               <Text className="text-h2 text-primary" numberOfLines={2}>
                 {root}
               </Text>
-              <Text
-                className="text-body-sm text-secondary mt-0.5"
-                style={{ fontVariant: ['tabular-nums'] }}
-              >
-                {products.length} item{products.length === 1 ? '' : 's'}
-              </Text>
+              {tree ? (
+                <Text
+                  className="text-body-sm text-secondary mt-0.5"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
+                  {tree.total} item{tree.total === 1 ? '' : 's'}
+                  {tree.children.length > 0
+                    ? ` · ${tree.children.length} subcategor${tree.children.length === 1 ? 'y' : 'ies'}`
+                    : ''}
+                </Text>
+              ) : null}
             </View>
           </View>
+          {showChips ? (
+            <ChipBar
+              total={tree.total}
+              children={tree.children}
+              selected={selectedChild}
+              onSelect={setSelectedChild}
+            />
+          ) : null}
         </SafeAreaView>
 
         {productsQuery.isLoading ? (
@@ -117,11 +146,21 @@ export default function StoreVendorCategoryScreen() {
             onCtaPress={() => productsQuery.refetch()}
           />
         ) : products.length === 0 ? (
-          <EmptyState
-            icon={PackageOpen}
-            heading="No products yet"
-            body="This category will fill in as scrape runs ingest more of this store's catalog."
-          />
+          selectedChild ? (
+            <EmptyState
+              icon={PackageOpen}
+              heading="No products yet"
+              body={`Nothing under "${selectedChild}" right now.`}
+              ctaLabel={`Show all in ${root}`}
+              onCtaPress={() => setSelectedChild(null)}
+            />
+          ) : (
+            <EmptyState
+              icon={PackageOpen}
+              heading="No products yet"
+              body="This category will fill in as scrape runs ingest more of this store's catalog."
+            />
+          )
         ) : (
           <FlatList
             data={products}
@@ -141,6 +180,79 @@ export default function StoreVendorCategoryScreen() {
         )}
       </View>
     </>
+  );
+}
+
+type ChipBarProps = {
+  total: number;
+  children: { name: string; productCount: number }[];
+  selected: string | null;
+  onSelect: (name: string | null) => void;
+};
+
+function ChipBar({ total, children, selected, onSelect }: ChipBarProps) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 10, gap: 6 }}
+    >
+      <Chip
+        label="All"
+        count={total}
+        selected={selected === null}
+        onPress={() => onSelect(null)}
+      />
+      {children.map((child) => (
+        <Chip
+          key={child.name}
+          label={child.name}
+          count={child.productCount}
+          selected={selected === child.name}
+          onPress={() => onSelect(child.name)}
+        />
+      ))}
+    </ScrollView>
+  );
+}
+
+function Chip({
+  label,
+  count,
+  selected,
+  onPress,
+}: {
+  label: string;
+  count: number;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel={`${label}, ${count} item${count === 1 ? '' : 's'}`}
+      className={`flex-row items-center rounded-full border-[0.5px] ${
+        selected
+          ? 'bg-brand-primary border-brand-primary'
+          : 'bg-surface border-border'
+      }`}
+      style={{ paddingHorizontal: 12, paddingVertical: 6, gap: 6 }}
+    >
+      <Text
+        className={`text-body-sm ${selected ? 'text-brand-primary-fg font-semibold' : 'text-primary'}`}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      <Text
+        className={`text-caption ${selected ? 'text-brand-primary-fg/80' : 'text-tertiary'}`}
+        style={{ fontVariant: ['tabular-nums'] }}
+      >
+        {count}
+      </Text>
+    </Pressable>
   );
 }
 

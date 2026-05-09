@@ -11,8 +11,10 @@ export const queryKeys = {
     ['products', 'in-category', categoryId, storeId ?? 'all'] as const,
   storeVendorCategories: (storeId: string) =>
     ['store-vendor-categories', storeId] as const,
-  productsAtStoreVendorRoot: (storeId: string, root: string) =>
-    ['products', 'store-vendor-root', storeId, root] as const,
+  storeVendorCategoryTree: (storeId: string, root: string) =>
+    ['store-vendor-tree', storeId, root] as const,
+  productsAtStoreVendorPath: (storeId: string, root: string, child: string | null) =>
+    ['products', 'store-vendor-path', storeId, root, child ?? '_all'] as const,
   pricesForProduct: (productId: string) => ['prices', 'product', productId] as const,
   listItemPrices: (productIds: readonly string[], storeId: string | null) =>
     ['prices', 'list-items', storeId ?? 'cheapest', [...productIds].sort()] as const,

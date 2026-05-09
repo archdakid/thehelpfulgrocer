@@ -4,6 +4,8 @@ import { isCategoryId, type CategoryId } from '@/constants/categories';
 import { queryKeys } from '@/lib/queryKeys';
 import { supabase } from '@/lib/supabase';
 
+const PATH_SEPARATOR = ' › ';
+
 // Mirrors the category-detail shape in useProductsInCategory so the
 // existing CategoryProductRow component can render this list unchanged.
 export type StoreVendorProductRow = {
@@ -46,28 +48,48 @@ type CategoryRow = {
   } | null;
 };
 
-// All products at a store sitting under a vendor_path_root, with cross-store
-// pricing context. Embeds `current_prices` so the row shows "best at X, save
-// TT$Y" the same way the global category screen does.
+// Products at a store under a vendor_path prefix. Two modes:
+//   - child = null:  all products under the root (vendor_path_root = root)
+//   - child set:     products at "root › child" exactly OR descendants
+//                    ("root › child › grandchild", etc.)
 //
-// One product can have multiple paths under the same root (Massy "Beverages
-// › Soft Drinks" + "Beverages › On Sale"); we de-dup on product_id.
-export function useProductsAtStoreVendorRoot(storeId: string | null, root: string | null) {
+// Embeds `current_prices` so the row shows "best at X, save TT$Y" the same
+// way the global category screen does. One product can have multiple paths
+// under the same root/child filter (Massy "Beverages › Soft Drinks" +
+// "Beverages › On Sale"); we de-dup on product_id.
+export function useProductsAtStoreVendorPath(
+  storeId: string | null,
+  root: string | null,
+  child: string | null = null,
+) {
   return useQuery({
     queryKey: storeId && root
-      ? queryKeys.productsAtStoreVendorRoot(storeId, root)
-      : ['products', 'store-vendor-root', 'none'],
+      ? queryKeys.productsAtStoreVendorPath(storeId, root, child)
+      : ['products', 'store-vendor-path', 'none'],
     enabled: !!storeId && !!root,
     staleTime: 1000 * 60,
     queryFn: async (): Promise<StoreVendorProductRow[]> => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('product_store_categories')
         .select(
           'product_id, vendor_path, products!inner(id, name, brand, image_url, category, current_prices(amount_minor_units, currency, store_id, stores(id, name)))',
         )
         .eq('store_id', storeId!)
-        .eq('vendor_path_root', root!)
-        .returns<CategoryRow[]>();
+        .eq('vendor_path_root', root!);
+
+      if (child) {
+        // Exact match on "root › child" + LIKE for descendants. PostgREST
+        // .or() takes comma-separated `column.op.value` pairs. Our paths
+        // never contain commas (the separator is ` › `) or like-wildcards
+        // (`%` / `_`), so the values pass through verbatim.
+        const exactPath = `${root}${PATH_SEPARATOR}${child}`;
+        const descendantsPattern = `${exactPath}${PATH_SEPARATOR}%`;
+        query = query.or(
+          `vendor_path.eq.${exactPath},vendor_path.like.${descendantsPattern}`,
+        );
+      }
+
+      const { data, error } = await query.returns<CategoryRow[]>();
       if (error) throw error;
 
       const seen = new Set<string>();
@@ -126,3 +148,10 @@ export function useProductsAtStoreVendorRoot(storeId: string | null, root: strin
     },
   });
 }
+
+// Backward-compat shim so the old name keeps working until consumers migrate.
+// Same as useProductsAtStoreVendorPath without the child filter.
+export const useProductsAtStoreVendorRoot = (
+  storeId: string | null,
+  root: string | null,
+) => useProductsAtStoreVendorPath(storeId, root, null);

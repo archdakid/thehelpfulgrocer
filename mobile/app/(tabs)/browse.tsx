@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { MapPin, Plus, ScanLine, Search } from 'lucide-react-native';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -23,10 +23,21 @@ export default function BrowseScreen() {
   const activeStoreId = useUIStore((s) => s.activeStoreId);
   const { data: stores } = useStores();
   const counts = useCategoryCounts();
+  // Browse always pulls vendor categories for the active store, even in
+  // global mode — used to decide whether to default to by-store and to show
+  // an accurate count next to the toggle. Cheap query (single SELECT, cached
+  // 5 min by the hook).
+  const vendorCategories = useStoreVendorCategories(activeStoreId);
+  const hasVendorCategories =
+    !!vendorCategories.data && vendorCategories.data.length > 0;
+  // Default to by-store when an active store has vendor categories ingested.
+  // The seed/admin global 8-bucket grid only meaningfully populates after
+  // many products have been admin-categorized; vendor categories are the
+  // honest reflection of what the store actually carries.
   const [mode, setMode] = useState<BrowseMode>('global');
-  const vendorCategories = useStoreVendorCategories(
-    mode === 'by-store' ? activeStoreId : null,
-  );
+  useEffect(() => {
+    if (mode === 'global' && hasVendorCategories) setMode('by-store');
+  }, [mode, hasVendorCategories]);
 
   const totalProducts = counts.data
     ? [...counts.data.values()].reduce((sum, n) => sum + n, 0)
@@ -107,7 +118,7 @@ export default function BrowseScreen() {
           />
         ) : (
           <ByStoreGrid
-            storeId={activeStoreId!}
+            storeName={activeStoreName}
             isLoading={vendorCategories.isLoading}
             isError={vendorCategories.isError}
             categories={vendorCategories.data ?? []}
@@ -223,19 +234,29 @@ function GlobalGrid({ counts, onPress }: GlobalGridProps) {
 }
 
 type ByStoreGridProps = {
-  storeId: string;
+  storeName: string;
   isLoading: boolean;
   isError: boolean;
   categories: { root: string; productCount: number }[];
   onPress: (root: string) => void;
 };
 
-function ByStoreGrid({ isLoading, isError, categories, onPress }: ByStoreGridProps) {
+function ByStoreGrid({ storeName, isLoading, isError, categories, onPress }: ByStoreGridProps) {
   return (
     <>
-      <Text className="text-eyebrow uppercase text-secondary px-4 pb-2">
-        At this store
-      </Text>
+      <View className="flex-row items-baseline justify-between px-4 pb-2">
+        <Text className="text-eyebrow uppercase text-secondary">
+          At {storeName}
+        </Text>
+        {categories.length > 0 ? (
+          <Text
+            className="text-caption text-tertiary"
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
+            {categories.length} categor{categories.length === 1 ? 'y' : 'ies'}
+          </Text>
+        ) : null}
+      </View>
       {isLoading ? (
         <View className="py-10 items-center">
           <ActivityIndicator />
