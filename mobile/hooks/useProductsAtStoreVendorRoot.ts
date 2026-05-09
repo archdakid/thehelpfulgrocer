@@ -69,13 +69,17 @@ export function useProductsAtStoreVendorPath(
     enabled: !!storeId && !!root,
     staleTime: 1000 * 60,
     queryFn: async (): Promise<StoreVendorProductRow[]> => {
+      // .limit(50000) defends against PostgREST's default 1000-row cap;
+      // popular roots can exceed it once vendor catalogs land. The natural
+      // listing length (1000-2000 products per root) sits well below this.
       let query = supabase
         .from('product_store_categories')
         .select(
           'product_id, vendor_path, products!inner(id, name, brand, image_url, category, current_prices(amount_minor_units, currency, store_id, stores(id, name)))',
         )
         .eq('store_id', storeId!)
-        .eq('vendor_path_root', root!);
+        .eq('vendor_path_root', root!)
+        .limit(50000);
 
       if (child) {
         // Exact match on "root › child" + LIKE for descendants. PostgREST

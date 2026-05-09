@@ -25,11 +25,16 @@ export function useStoreVendorCategories(storeId: string | null) {
     enabled: !!storeId,
     staleTime: 1000 * 60 * 5,
     queryFn: async (): Promise<StoreVendorCategoryRoot[]> => {
-      // The (store_id, vendor_path_root) index covers this read.
+      // The (store_id, vendor_path_root) index covers this read. The limit
+      // overrides PostgREST's default 1000-row cap which silently truncates
+      // for stores with large catalogs (SuperPharm has ~16k rows here =
+      // 11k products × ~1.5 paths each). Without it the by-store grid sees
+      // only whatever roots the first 1000 rows happen to cover.
       const { data, error } = await supabase
         .from('product_store_categories')
         .select('vendor_path_root, product_id')
-        .eq('store_id', storeId!);
+        .eq('store_id', storeId!)
+        .limit(100000);
       if (error) throw error;
 
       const productsByRoot = new Map<string, Set<string>>();

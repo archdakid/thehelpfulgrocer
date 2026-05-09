@@ -39,11 +39,15 @@ export function useStoreVendorCategoryTree(storeId: string | null, root: string 
     enabled: !!storeId && !!root,
     staleTime: 1000 * 60 * 5,
     queryFn: async (): Promise<StoreVendorTree> => {
+      // .limit(50000) defends against PostgREST's default 1000-row cap;
+      // popular roots (SP "School & Office" with 1360 products × ~1.5 paths)
+      // exceed the default and would otherwise truncate the chip counts.
       const { data, error } = await supabase
         .from('product_store_categories')
         .select('vendor_path, product_id')
         .eq('store_id', storeId!)
         .eq('vendor_path_root', root!)
+        .limit(50000)
         .returns<RawRow[]>();
       if (error) throw error;
 
