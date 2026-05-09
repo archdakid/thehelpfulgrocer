@@ -337,6 +337,17 @@ async function ensureProduct(
     .maybeSingle();
   if (aliasRow) return aliasRow.product_id;
 
+  // 2.5. Cross-vendor identity match (DECISIONS.md 2026-05-09). UPC missed,
+  //      vendor alias missed. Fuzzy-match against the rest of the catalog by
+  //      brand + name + size. Auto-link at high confidence; otherwise insert
+  //      new and possibly flag for admin review (handled by the caller after
+  //      insert returns).
+  const matchResult = await tryMatchExisting(admin, p);
+  if (matchResult.action === 'auto_link') {
+    await ensureAlias(admin, matchResult.productId, aliasKey);
+    return matchResult.productId;
+  }
+
   // 3. Brand new product. Insert with the real UPC if we have one; otherwise
   //    use INTERNAL-<VENDOR>-<id> following the existing OFF-skip convention.
   const placeholderUpc = `INTERNAL-${vendor.toUpperCase()}-${p.externalId}`;
@@ -378,7 +389,144 @@ async function ensureProduct(
   }
 
   await ensureAlias(admin, data.id, aliasKey);
+
+  // If the matcher found a tentative candidate (medium confidence), file a
+  // potential_duplicate row so admin can decide. Best-effort: a queue-write
+  // failure shouldn't block the price ingest, so swallow + log.
+  if (matchResult.action === 'flag') {
+    try {
+      await flagPotentialDuplicate(admin, {
+        flaggedProductId: data.id,
+        candidateProductId: matchResult.candidateId,
+        score: matchResult.score,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('flagPotentialDuplicate failed', msg);
+    }
+  }
   return data.id;
+}
+
+type MatchAction =
+  | { action: 'auto_link'; productId: string }
+  | { action: 'flag'; candidateId: string; score: number }
+  | { action: 'insert' };
+
+// Cross-vendor identity match. Calls `match_existing_product` RPC and
+// applies the auto-link / flag / insert decision policy. The thresholds
+// were calibrated against real cross-vendor name pairs (DECISIONS.md
+// 2026-05-09): trigram alone tops out around 0.65–0.75 for clear matches
+// when word counts differ, so brand + size are essential confidence
+// boosters rather than refinements.
+async function tryMatchExisting(
+  admin: SupabaseClient,
+  p: ProductInput,
+): Promise<MatchAction> {
+  const name = p.name?.trim() ?? '';
+  if (!name) return { action: 'insert' };
+
+  type Candidate = {
+    product_id: string;
+    candidate_name: string | null;
+    candidate_brand: string | null;
+    similarity: number;
+    same_brand: boolean;
+    same_size: boolean;
+  };
+
+  let candidates: Candidate[] = [];
+  try {
+    const { data, error } = await (admin.rpc as any)('match_existing_product', {
+      p_name: name,
+      p_brand: p.brand ?? null,
+      p_unit_size: p.unitSize ?? null,
+      p_unit_of_measure: p.unitOfMeasure ?? null,
+      p_exclude_id: null,
+    });
+    if (error) {
+      console.warn('match_existing_product RPC failed', error.message);
+      return { action: 'insert' };
+    }
+    candidates = (data ?? []) as Candidate[];
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('match_existing_product threw', msg);
+    return { action: 'insert' };
+  }
+
+  const best = candidates[0];
+  if (!best) return { action: 'insert' };
+  const score = Number(best.similarity);
+  if (!Number.isFinite(score)) return { action: 'insert' };
+
+  // Multipack mismatch detector. PriceSmart sells "Pepsi Cola Soft Drink 24
+  // Units / 500 mL" cases; Massy sells "Pepsi 500 Ml" singles. Trigram +
+  // brand + size could otherwise over-confidently merge them — and merging
+  // loses the per-unit math we'd want from product_equivalents. If exactly
+  // one of the two has a multipack marker, never auto-link and downgrade
+  // the flag confidence so admin treats it as a pack-variant pair.
+  const newHasPack = hasMultipackMarker(name);
+  const candHasPack = hasMultipackMarker(best.candidate_name ?? '');
+  const packMismatch = newHasPack !== candHasPack;
+
+  // Auto-link policy: requires same_size AND no pack mismatch.
+  if (best.same_size && !packMismatch) {
+    if (score >= 0.85) {
+      return { action: 'auto_link', productId: best.product_id };
+    }
+    if (score >= 0.7 && best.same_brand) {
+      return { action: 'auto_link', productId: best.product_id };
+    }
+  }
+
+  // Flag policy: 0.50+ goes to admin queue. Tightened to require either
+  // same_size or same_brand so we don't generate noise from coincidental
+  // name overlap.
+  if (score >= 0.5 && (best.same_size || best.same_brand)) {
+    return { action: 'flag', candidateId: best.product_id, score };
+  }
+
+  return { action: 'insert' };
+}
+
+// Patterns that signal a multipack/wholesale SKU: "24 Units", "12 Pack",
+// "12-Pack", "Case of 12", "4'S" / "4`S" (Massy convention), "x4" / "x 24".
+function hasMultipackMarker(s: string): boolean {
+  if (!s) return false;
+  return (
+    /\b\d+\s*(units?|pack|pks?|case|ct|count)\b/i.test(s) ||
+    /\bcase\s+of\s+\d+\b/i.test(s) ||
+    /\b\d+\s*['`]\s*s\b/i.test(s) ||
+    /\bx\s*\d+\b/i.test(s)
+  );
+}
+
+async function flagPotentialDuplicate(
+  admin: SupabaseClient,
+  args: {
+    flaggedProductId: string;
+    candidateProductId: string;
+    score: number;
+  },
+): Promise<void> {
+  // Idempotent: the partial unique index on
+  // (flagged_product_id, candidate_product_id, reason) for ingest-origin
+  // rows handles double-inserts when a chunk is replayed.
+  const { error } = await (admin.from('flagged_items') as any).upsert(
+    {
+      receipt_item_id: null,
+      flagged_product_id: args.flaggedProductId,
+      candidate_product_id: args.candidateProductId,
+      reason: 'potential_duplicate',
+      match_score: Number(args.score.toFixed(3)),
+    },
+    {
+      onConflict: 'flagged_product_id,candidate_product_id,reason',
+      ignoreDuplicates: true,
+    },
+  );
+  if (error) throw new Error(error.message);
 }
 
 async function ensureAlias(
