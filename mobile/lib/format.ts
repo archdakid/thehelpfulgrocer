@@ -73,6 +73,40 @@ export function formatPerUnitPrice(args: {
   return `${formatPrice(Math.round(perReference), currency)} / ${label}`;
 }
 
+// Decode common HTML entities for display. Vendor scrapers (Massy in
+// particular) sometimes leave entities in category names — "Health &amp;
+// Beauty" should render as "Health & Beauty". We decode at display time
+// rather than in the DB so values used as query identities (vendor_path,
+// vendor_path_root in URL params and PostgREST filters) stay byte-identical
+// to what's stored. Only the rendered text differs.
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+};
+
+export function decodeHtmlEntities(s: string): string {
+  if (!s) return s;
+  return s.replace(
+    /&(?:(amp|lt|gt|quot|apos|nbsp)|#(\d+)|#x([0-9a-f]+));/gi,
+    (match, name, dec, hex) => {
+      if (name) return NAMED_ENTITIES[name.toLowerCase()] ?? match;
+      if (dec) {
+        const n = Number(dec);
+        return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : match;
+      }
+      if (hex) {
+        const n = parseInt(hex, 16);
+        return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : match;
+      }
+      return match;
+    },
+  );
+}
+
 // Multipack breakdown. "TT$110 case of 24" becomes "case of 24 — TT$4.58 each"
 // so the user can compare against a single-unit SKU at another store. Returns
 // null when units_per_pack is unset, 1, or invalid.

@@ -40,10 +40,10 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Mirror of the CHECK constraint added in migration 0004. Keeping this
-// list in sync with the migration is a manual concern (same as
-// mobile/constants/categories.ts); a typo here just means the function
-// rejects valid input, not that bad data lands.
+// Mirror of the CHECK constraint added in migration 0004 and expanded in
+// 0032. Keeping this list in sync with the migration is a manual concern
+// (same as mobile/constants/categories.ts); a typo here just means the
+// function rejects valid input, not that bad data lands.
 const CATEGORIES = new Set([
   'produce',
   'dairy',
@@ -53,6 +53,10 @@ const CATEGORIES = new Set([
   'frozen',
   'beverage',
   'snacks',
+  'household',
+  'personal_care',
+  'pharmacy',
+  'baby',
 ]);
 
 type Action = 'create' | 'update' | 'delete';

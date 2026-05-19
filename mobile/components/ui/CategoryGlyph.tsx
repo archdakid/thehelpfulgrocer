@@ -83,5 +83,39 @@ export default function CategoryGlyph({ category, size = 22, color }: CategoryGl
           <Circle cx="10" cy="15" r="0.9" fill={stroke} stroke="none" />
         </Svg>
       );
+    case 'household':
+      // Spray bottle: bottle body + trigger neck.
+      return (
+        <Svg {...props}>
+          <Path d="M9 10h6v9a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-9z" />
+          <Path d="M9 10V7h4l1 3" />
+          <Path d="M14 7l3-1.5v3.5" />
+        </Svg>
+      );
+    case 'personal_care':
+      // Tube/bottle with a flat cap and a fill-line.
+      return (
+        <Svg {...props}>
+          <Path d="M10 4h4v2l1 1.5V19a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2V7.5L10 6V4z" />
+          <Path d="M10 11.5h4" />
+        </Svg>
+      );
+    case 'pharmacy':
+      // Capsule: rounded rectangle split down the middle.
+      return (
+        <Svg {...props}>
+          <Path d="M5.5 12a3.5 3.5 0 0 1 3.5-3.5h6a3.5 3.5 0 0 1 0 7H9a3.5 3.5 0 0 1-3.5-3.5z" />
+          <Path d="M12 8.5v7" />
+        </Svg>
+      );
+    case 'baby':
+      // Bottle with nipple, neck, and contents line.
+      return (
+        <Svg {...props}>
+          <Path d="M11 3.5h2v2c1 0 1.5 1 1.5 1.5v2h-5V7c0-.5.5-1.5 1.5-1.5v-2z" />
+          <Path d="M9.5 9h5v9a2.5 2.5 0 0 1-2.5 2.5A2.5 2.5 0 0 1 9.5 18V9z" />
+          <Path d="M9.5 13h5" />
+        </Svg>
+      );
   }
 }

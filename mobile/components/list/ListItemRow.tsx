@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { Minus, Plus, Trash2 } from 'lucide-react-native';
 import { Pressable, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -87,12 +88,26 @@ export default function ListItemRow({
           onToggle={onToggle}
           accessibilityLabel={`${item.checked ? 'Uncheck' : 'Check'} ${item.name}`}
         />
-        <View
-          className="w-11 h-11 rounded-md items-center justify-center ml-3"
-          style={{ backgroundColor: tile.bg }}
-        >
-          <CategoryGlyph category={category} />
-        </View>
+        {item.imageUrl ? (
+          // Product thumbnail when we have one (admin-uploaded or scraped).
+          // The colored tile + glyph remains the fallback for custom items
+          // and products without an image_url. Rounded corners match the
+          // existing tile shape so the row layout stays identical.
+          <Image
+            source={{ uri: item.imageUrl }}
+            style={{ width: 44, height: 44, borderRadius: 6, marginLeft: 12 }}
+            contentFit="cover"
+            transition={120}
+            accessibilityIgnoresInvertColors
+          />
+        ) : (
+          <View
+            className="w-11 h-11 rounded-md items-center justify-center ml-3"
+            style={{ backgroundColor: tile.bg }}
+          >
+            <CategoryGlyph category={category} />
+          </View>
+        )}
         <GestureDetector gesture={tapToOpen}>
           <View
             className="flex-1 ml-3"

@@ -13,6 +13,7 @@ import {
 } from '@/hooks/useProductsAtStoreVendorRoot';
 import { useStores } from '@/hooks/useStores';
 import { useStoreVendorCategoryTree } from '@/hooks/useStoreVendorCategoryTree';
+import { decodeHtmlEntities } from '@/lib/format';
 import { logger } from '@/lib/logger';
 import { useThemedColors } from '@/lib/themedColors';
 import { useListStore } from '@/stores/useListStore';
@@ -75,6 +76,10 @@ export default function StoreVendorCategoryScreen() {
   const storeName = stores?.find((s) => s.id === storeId)?.name ?? 'this store';
   const products = productsQuery.data ?? [];
   const tree = treeQuery.data;
+  // Decode for header / chips / empty-state copy. `root` and `selectedChild`
+  // remain encoded for the queries above (they're DB identities).
+  const displayRoot = decodeHtmlEntities(root);
+  const displaySelectedChild = selectedChild ? decodeHtmlEntities(selectedChild) : null;
   // Show chips only when we have at least one subcategory worth navigating
   // into. Single-segment paths (e.g. PriceSmart's flat "Groceries") collapse
   // to a flat product list — chips would be a single useless "All".
@@ -108,7 +113,7 @@ export default function StoreVendorCategoryScreen() {
             </View>
             <View className="flex-1">
               <Text className="text-h2 text-primary" numberOfLines={2}>
-                {root}
+                {displayRoot}
               </Text>
               {tree ? (
                 <Text
@@ -150,8 +155,8 @@ export default function StoreVendorCategoryScreen() {
             <EmptyState
               icon={PackageOpen}
               heading="No products yet"
-              body={`Nothing under "${selectedChild}" right now.`}
-              ctaLabel={`Show all in ${root}`}
+              body={`Nothing under "${displaySelectedChild}" right now.`}
+              ctaLabel={`Show all in ${displayRoot}`}
               onCtaPress={() => setSelectedChild(null)}
             />
           ) : (
@@ -206,7 +211,9 @@ function ChipBar({ total, children, selected, onSelect }: ChipBarProps) {
       {children.map((child) => (
         <Chip
           key={child.name}
-          label={child.name}
+          // Decode for display; selection / onSelect still passes the raw
+          // DB-stored name so the query in the parent stays correct.
+          label={decodeHtmlEntities(child.name)}
           count={child.productCount}
           selected={selected === child.name}
           onPress={() => onSelect(child.name)}
@@ -265,5 +272,6 @@ function handleAdd(
     name: row.name,
     brand: row.brand,
     category: isCategoryId(row.category) ? row.category : null,
+    imageUrl: row.imageUrl,
   });
 }

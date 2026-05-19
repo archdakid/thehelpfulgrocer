@@ -22,7 +22,6 @@ export default function BrowseScreen() {
   const c = useThemedColors();
   const activeStoreId = useUIStore((s) => s.activeStoreId);
   const { data: stores } = useStores();
-  const counts = useCategoryCounts();
   // Browse always pulls vendor categories for the active store, even in
   // global mode — used to decide whether to default to by-store and to show
   // an accurate count next to the toggle. Cheap query (single SELECT, cached
@@ -39,6 +38,23 @@ export default function BrowseScreen() {
     if (mode === 'global' && hasVendorCategories) setMode('by-store');
   }, [mode, hasVendorCategories]);
 
+  // The by-store toggle only makes sense when a store is selected — vendor
+  // categories are per-retailer, and "all stores" is exactly the global view.
+  const canShowByStore = !!activeStoreId;
+  const effectiveMode: BrowseMode = mode === 'by-store' && canShowByStore ? 'by-store' : 'global';
+
+  // Counts depend on the effective mode + active store: in "All Stores"
+  // we want multi-store-only (matching the drill-down). When an active
+  // store is set, additionally require the product is at that store —
+  // "available here AND elsewhere" is the contract for the All-Stores
+  // view of a chosen store. By-store mode doesn't use the global counts
+  // (it shows vendor categories instead) so the option choice is moot
+  // there; we keep multi-store on for query-cache consistency.
+  const counts = useCategoryCounts({
+    requireMultiStore: effectiveMode === 'global',
+    storeId: activeStoreId,
+  });
+
   const totalProducts = counts.data
     ? [...counts.data.values()].reduce((sum, n) => sum + n, 0)
     : null;
@@ -48,11 +64,6 @@ export default function BrowseScreen() {
   const placeholder = totalProducts !== null
     ? `Search ${totalProducts} item${totalProducts === 1 ? '' : 's'} at ${activeStoreName}`
     : `Search at ${activeStoreName}`;
-
-  // The by-store toggle only makes sense when a store is selected — vendor
-  // categories are per-retailer, and "all stores" is exactly the global view.
-  const canShowByStore = !!activeStoreId;
-  const effectiveMode: BrowseMode = mode === 'by-store' && canShowByStore ? 'by-store' : 'global';
 
   return (
     <SafeAreaView edges={['top']} className="flex-1 bg-canvas">
@@ -114,7 +125,10 @@ export default function BrowseScreen() {
         {effectiveMode === 'global' ? (
           <GlobalGrid
             counts={counts.data}
-            onPress={(cat) => router.push(`/category/${cat}`)}
+            // multi=1 tells the drill-down to apply the multi-store
+            // filter regardless of activeStoreId — keeping its visible
+            // products in lockstep with what the tile counted.
+            onPress={(cat) => router.push(`/category/${cat}?multi=1`)}
           />
         ) : (
           <ByStoreGrid

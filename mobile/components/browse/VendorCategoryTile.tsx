@@ -1,6 +1,7 @@
 import { Tag } from 'lucide-react-native';
 import { Pressable, Text, View } from 'react-native';
 
+import { decodeHtmlEntities } from '@/lib/format';
 import { useThemedColors } from '@/lib/themedColors';
 
 type VendorCategoryTileProps = {
@@ -15,12 +16,15 @@ type VendorCategoryTileProps = {
 // own labelling is the unit of identity.
 export default function VendorCategoryTile({ root, count, onPress }: VendorCategoryTileProps) {
   const c = useThemedColors();
+  // Decode for display only — `root` is also the URL/query identity, so
+  // navigation up at the call site still passes the raw DB value.
+  const displayRoot = decodeHtmlEntities(root);
 
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Browse ${root}`}
+      accessibilityLabel={`Browse ${displayRoot}`}
       className="rounded-lg p-3.5 bg-surface border-[0.5px] border-border"
       style={{ minHeight: 132 }}
     >
@@ -35,7 +39,7 @@ export default function VendorCategoryTile({ root, count, onPress }: VendorCateg
           style={{ fontSize: 15, fontWeight: '600', letterSpacing: -0.1 }}
           numberOfLines={2}
         >
-          {root}
+          {displayRoot}
         </Text>
         <Text
           className="text-caption text-secondary"

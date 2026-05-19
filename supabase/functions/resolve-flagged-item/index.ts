@@ -60,9 +60,9 @@ type Edits = {
   unitPriceMinorUnits?: number | null;
 };
 
-// Mirrors the CHECK constraint on products.category (migration 0004) and
-// the manage-product Edge Function's allow-list. Drift here means valid
-// admin edits get rejected, not bad data lands.
+// Mirrors the CHECK constraint on products.category (migration 0004,
+// expanded in 0032) and the manage-product Edge Function's allow-list.
+// Drift here means valid admin edits get rejected, not bad data lands.
 const CATEGORIES = new Set([
   'produce',
   'dairy',
@@ -72,6 +72,10 @@ const CATEGORIES = new Set([
   'frozen',
   'beverage',
   'snacks',
+  'household',
+  'personal_care',
+  'pharmacy',
+  'baby',
 ]);
 
 type Payload = {
