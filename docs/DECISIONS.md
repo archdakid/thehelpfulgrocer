@@ -602,6 +602,32 @@ The matching problem splits into two:
 
 ---
 
+## 2026-05-09 — LLM triage drains the `potential_duplicate` queue; product_equivalents is directional
+
+**Context:** Migration 0026 added the trigram identity matcher with a `potential_duplicate` queue, plus a runner-side backfill (0027/0028) that flagged ~9.4k pairs across the existing PriceSmart/SuperPharm/Massy catalogs. Two open questions: how to drain that queue at human scale, and how to model pack-variant equivalence (Massy single can vs PriceSmart case-of-24) once the LLM identifies one.
+
+**Decision:**
+- Drain the queue with one NVIDIA NIM call per batch (default 10 pairs/call, runner-overridable, Edge Function clamps at 30) over a new `triage-duplicates` Edge Function. NIM (build.nvidia.com / `integrate.api.nvidia.com`) hosts Meta Llama 3.3 70B Instruct; the API is OpenAI-compatible (`POST /v1/chat/completions`, Bearer auth). The LLM picks one of `same_product` (→ `merge_products` RPC), `pack_variant` (→ insert `product_equivalents`), `different` (→ resolve as `rejected`), or `uncertain` (→ leave for admin). The runner (`admin/scripts/triage-duplicates.mjs`) signs in as an admin user, forwards the JWT, and paces calls at 1600 ms to fit NIM's free-tier 40 RPM (no daily cap) — ~24 minutes wall-clock to drain ~9.4k pairs.
+- `product_equivalents` is **directional**: `(product_id, equivalent_product_id, scale_factor)` with `scale_factor > 1` enforced. Application convention writes "larger pack → smaller unit" (e.g. case-of-24 → single can with `scale_factor = 24`). Reads at compare time UNION the inverse direction so the lookup is bidirectional but the stored fact is single-source.
+- `flagged_items.resolution` gains a fifth value, `pack_variant`, so admins can filter the queue by "what did the LLM decide" and spot-check.
+
+**Reasoning:**
+- Pure-admin drain at 9.4k pairs is impractical. The LLM at temperature 0 with brand + size context handles the high-confidence majority; the residual `uncertain` bucket is what admin actually clicks through. The existing `resolve-flagged-item` Edge Function still owns the human path — the triage function only writes outcomes the model is confident in.
+- `merge_products` (from 0026) is reused for `same_product`. No new merge *path*, but draining the backfill exposed two `flagged_items_ingest_unique` collisions the function hit, fixed in 0030 (post-merge-redundant unresolved flags) and 0031 (the symmetric `(E,F)` / `(F,E)` case): both now pre-resolve would-be-duplicate unresolved flags as `merged` (with a system note) before the repoint UPDATEs, and the index only enforces on unresolved rows. Direction is fixed by the matcher's framing — the *flagged* product is the just-inserted/later one and gets collapsed into the *candidate* (older), preserving accumulated history on the surviving row.
+- Directional `product_equivalents` over symmetric: a symmetric model (storing both `(A, B, 24)` and `(B, A, 1/24)`) introduces the risk of asymmetric drift if one side is updated and the other isn't. Storing one canonical direction with `scale_factor > 1` and UNION-ing at read time keeps the table small, the constraint enforceable, and the data invariant uncomplicated.
+- Provider chain: Gemini 2.5 Flash (free tier 5 RPM / 20 RPD) is DOA at this volume; Gemma 4 31B (15 RPM / 1.5K RPD) is workable but tight against the receipts + circulars budget; NVIDIA NIM Llama 3.3 70B (40 RPM, no daily cap, OpenAI-compatible, 70B-class) clears the volume with margin. Structured output is enforced by `response_format: {type: 'json_object'}` plus a worked-example prompt — NIM silently ignored `nvext.guided_json` on this endpoint, so `extractJson` stays as a defensive parser for the rare fence-wrapped reply.
+- Conservative LLM defaults: temperature 0, explicit "prefer uncertain over guessing" in the prompt, `[triage_llm]` prefix on resolution notes so admin can filter or audit any subset of the LLM's calls. False positives in catalog identity are asymmetrically costly (they show wrong prices to users); false negatives just leave a flag in the queue.
+- Volume math: 9,443 pairs / 10 per call ≈ 945 calls. At 1600 ms pace (40 RPM = 1500 ms + 100 ms safety) that's ~25 minutes; no daily cap so `MAX_CALLS=5000` is a runaway guardrail, not a quota.
+
+**Trade-offs accepted:**
+- **New function secret:** `triage-duplicates` requires `NVIDIA_API_KEY` set on the Supabase project. This is the first LLM pipeline that does *not* reuse `GOOGLE_AI_API_KEY` (receipts / circulars) — it must be provisioned before deploy or the function returns 500 "NVIDIA_API_KEY is not configured".
+- Free-tier data-use / ToS now follows build.nvidia.com rather than Google. Catalog product names and brands are public info, so this stays a non-issue; the provider change is noted for completeness.
+- LLM mistakes are real. The `[triage_llm]` notes prefix + the new `pack_variant` resolution value let admin spot-audit by filter; correcting an LLM-decided flag means admin re-flags or runs a manual `merge_products` undo. Acceptable cost — at ~9.4k pairs the admin click-through alternative is months of work.
+- One NIM call per Edge Function invocation (not multi-batch streaming). Cold-starts are hot-path overhead, but the runner's `PACE_MS` dominates anyway. Simpler beats faster here.
+- The compare-sheet UI binding for `product_equivalents` (per-unit math row in `PriceComparisonRow`) is deferred to a follow-up so the LLM's output can be validated against admin spot-checks before going live in front of users.
+
+---
+
 ## Template for future entries
 
 ```markdown

@@ -199,11 +199,14 @@ export type Database = {
       flagged_items: {
         Row: {
           auto_created_product_id: string | null
+          candidate_product_id: string | null
           created_at: string
+          flagged_product_id: string | null
           id: string
+          match_score: number | null
           notes: string | null
           reason: string
-          receipt_item_id: string
+          receipt_item_id: string | null
           resolution: string | null
           resolved_at: string | null
           resolved_by: string | null
@@ -211,11 +214,14 @@ export type Database = {
         }
         Insert: {
           auto_created_product_id?: string | null
+          candidate_product_id?: string | null
           created_at?: string
+          flagged_product_id?: string | null
           id?: string
+          match_score?: number | null
           notes?: string | null
           reason: string
-          receipt_item_id: string
+          receipt_item_id?: string | null
           resolution?: string | null
           resolved_at?: string | null
           resolved_by?: string | null
@@ -223,11 +229,14 @@ export type Database = {
         }
         Update: {
           auto_created_product_id?: string | null
+          candidate_product_id?: string | null
           created_at?: string
+          flagged_product_id?: string | null
           id?: string
+          match_score?: number | null
           notes?: string | null
           reason?: string
-          receipt_item_id?: string
+          receipt_item_id?: string | null
           resolution?: string | null
           resolved_at?: string | null
           resolved_by?: string | null
@@ -237,6 +246,20 @@ export type Database = {
           {
             foreignKeyName: "flagged_items_auto_created_product_id_fkey"
             columns: ["auto_created_product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "flagged_items_candidate_product_id_fkey"
+            columns: ["candidate_product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "flagged_items_flagged_product_id_fkey"
+            columns: ["flagged_product_id"]
             isOneToOne: false
             referencedRelation: "products"
             referencedColumns: ["id"]
@@ -349,6 +372,57 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "product_aliases_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      product_equivalents: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          equivalent_product_id: string
+          id: string
+          notes: string | null
+          product_id: string
+          scale_factor: number
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          equivalent_product_id: string
+          id?: string
+          notes?: string | null
+          product_id: string
+          scale_factor: number
+          source: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          equivalent_product_id?: string
+          id?: string
+          notes?: string | null
+          product_id?: string
+          scale_factor?: number
+          source?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_equivalents_equivalent_product_id_fkey"
+            columns: ["equivalent_product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_equivalents_product_id_fkey"
             columns: ["product_id"]
             isOneToOne: false
             referencedRelation: "products"
@@ -847,12 +921,64 @@ export type Database = {
       }
     }
     Functions: {
+      backfill_potential_duplicates: {
+        Args: { p_min_score?: number }
+        Returns: {
+          flagged: number
+          scanned: number
+        }[]
+      }
+      backfill_potential_duplicates_batch: {
+        Args: {
+          p_after_id?: string
+          p_batch_size?: number
+          p_min_score?: number
+        }
+        Returns: {
+          flagged: number
+          last_id: string
+          scanned: number
+        }[]
+      }
+      backfill_potential_duplicates_run: {
+        Args: {
+          p_after_id?: string
+          p_batch_size?: number
+          p_min_score?: number
+        }
+        Returns: {
+          flagged: number
+          last_id: string
+          scanned: number
+        }[]
+      }
+      match_existing_product: {
+        Args: {
+          p_brand?: string
+          p_exclude_id?: string
+          p_name: string
+          p_unit_of_measure?: string
+          p_unit_size?: number
+        }
+        Returns: {
+          candidate_brand: string
+          candidate_name: string
+          product_id: string
+          same_brand: boolean
+          same_size: boolean
+          similarity: number
+        }[]
+      }
       match_receipt_text: {
         Args: { needle: string }
         Returns: {
           confidence: number
           product_id: string
         }[]
+      }
+      merge_products: {
+        Args: { p_loser_id: string; p_winner_id: string }
+        Returns: undefined
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
