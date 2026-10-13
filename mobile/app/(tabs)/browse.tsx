@@ -1,23 +1,59 @@
 import { useRouter } from 'expo-router';
 import { MapPin, Plus, ScanLine, Search } from 'lucide-react-native';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import CategoryTile from '@/components/browse/CategoryTile';
+import VendorCategoryTile from '@/components/browse/VendorCategoryTile';
 import { CATEGORY_DISPLAY_ORDER } from '@/constants/categories';
 import { useCategoryCounts } from '@/hooks/useCategoryCounts';
 import { useStores } from '@/hooks/useStores';
+import { useStoreVendorCategories } from '@/hooks/useStoreVendorCategories';
 import { useThemedColors } from '@/lib/themedColors';
 import { useUIStore } from '@/stores/useUIStore';
 
 const QUICK_ADD = ['Bananas', 'Whole milk', 'Bread', 'Eggs', 'Tomatoes', 'Rice', 'Coffee'];
+
+type BrowseMode = 'global' | 'by-store';
 
 export default function BrowseScreen() {
   const router = useRouter();
   const c = useThemedColors();
   const activeStoreId = useUIStore((s) => s.activeStoreId);
   const { data: stores } = useStores();
-  const counts = useCategoryCounts();
+  // Browse always pulls vendor categories for the active store, even in
+  // global mode — used to decide whether to default to by-store and to show
+  // an accurate count next to the toggle. Cheap query (single SELECT, cached
+  // 5 min by the hook).
+  const vendorCategories = useStoreVendorCategories(activeStoreId);
+  const hasVendorCategories =
+    !!vendorCategories.data && vendorCategories.data.length > 0;
+  // Default to by-store when an active store has vendor categories ingested.
+  // The seed/admin global 8-bucket grid only meaningfully populates after
+  // many products have been admin-categorized; vendor categories are the
+  // honest reflection of what the store actually carries.
+  const [mode, setMode] = useState<BrowseMode>('global');
+  useEffect(() => {
+    if (mode === 'global' && hasVendorCategories) setMode('by-store');
+  }, [mode, hasVendorCategories]);
+
+  // The by-store toggle only makes sense when a store is selected — vendor
+  // categories are per-retailer, and "all stores" is exactly the global view.
+  const canShowByStore = !!activeStoreId;
+  const effectiveMode: BrowseMode = mode === 'by-store' && canShowByStore ? 'by-store' : 'global';
+
+  // Counts depend on the effective mode + active store: in "All Stores"
+  // we want multi-store-only (matching the drill-down). When an active
+  // store is set, additionally require the product is at that store —
+  // "available here AND elsewhere" is the contract for the All-Stores
+  // view of a chosen store. By-store mode doesn't use the global counts
+  // (it shows vendor categories instead) so the option choice is moot
+  // there; we keep multi-store on for query-cache consistency.
+  const counts = useCategoryCounts({
+    requireMultiStore: effectiveMode === 'global',
+    storeId: activeStoreId,
+  });
 
   const totalProducts = counts.data
     ? [...counts.data.values()].reduce((sum, n) => sum + n, 0)
@@ -60,7 +96,7 @@ export default function BrowseScreen() {
       >
         {/* Store-context banner */}
         <View
-          className="mx-4 mb-3.5 px-3 py-2.5 rounded-md flex-row items-center bg-brand-primary/10"
+          className="mx-4 mb-3 px-3 py-2.5 rounded-md flex-row items-center bg-brand-primary/10"
           style={{ gap: 10 }}
         >
           <MapPin size={16} color={c.brand.primary} />
@@ -78,19 +114,33 @@ export default function BrowseScreen() {
           </Pressable>
         </View>
 
-        {/* Categories grid */}
-        <Text className="text-eyebrow uppercase text-secondary px-4 pb-2">Categories</Text>
-        <View className="px-3 flex-row flex-wrap">
-          {CATEGORY_DISPLAY_ORDER.map((cat) => (
-            <View key={cat} style={{ width: '50%', paddingHorizontal: 4, marginBottom: 8 }}>
-              <CategoryTile
-                category={cat}
-                count={counts.data?.get(cat)}
-                onPress={() => router.push(`/category/${cat}`)}
-              />
-            </View>
-          ))}
-        </View>
+        {/* Global / By-store toggle. Hidden when no store is picked — the
+            by-store view has nothing to render in that case. */}
+        {canShowByStore ? (
+          <View className="px-4 pb-3">
+            <ModeToggle mode={effectiveMode} onChange={setMode} />
+          </View>
+        ) : null}
+
+        {effectiveMode === 'global' ? (
+          <GlobalGrid
+            counts={counts.data}
+            // multi=1 tells the drill-down to apply the multi-store
+            // filter regardless of activeStoreId — keeping its visible
+            // products in lockstep with what the tile counted.
+            onPress={(cat) => router.push(`/category/${cat}?multi=1`)}
+          />
+        ) : (
+          <ByStoreGrid
+            storeName={activeStoreName}
+            isLoading={vendorCategories.isLoading}
+            isError={vendorCategories.isError}
+            categories={vendorCategories.data ?? []}
+            onPress={(root) =>
+              router.push(`/category/store/${activeStoreId}/${encodeURIComponent(root)}`)
+            }
+          />
+        )}
 
         {/* Often bought */}
         <Text className="text-eyebrow uppercase text-secondary px-4 pt-5 pb-2">Often bought</Text>
@@ -118,5 +168,142 @@ export default function BrowseScreen() {
         </ScrollView>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+type ModeToggleProps = {
+  mode: BrowseMode;
+  onChange: (mode: BrowseMode) => void;
+};
+
+function ModeToggle({ mode, onChange }: ModeToggleProps) {
+  return (
+    <View
+      className="flex-row items-center bg-surface border-[0.5px] border-border rounded-md p-0.5"
+      accessibilityRole="tablist"
+    >
+      <ToggleButton
+        label="All stores"
+        active={mode === 'global'}
+        onPress={() => onChange('global')}
+      />
+      <ToggleButton
+        label="This store"
+        active={mode === 'by-store'}
+        onPress={() => onChange('by-store')}
+      />
+    </View>
+  );
+}
+
+function ToggleButton({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={label}
+      className={`flex-1 items-center justify-center rounded ${active ? 'bg-brand-primary/10' : ''}`}
+      style={{ paddingVertical: 8 }}
+    >
+      <Text
+        className={`text-body-sm ${active ? 'text-brand-primary font-semibold' : 'text-secondary'}`}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+type GlobalGridProps = {
+  counts: Map<string, number> | undefined;
+  onPress: (cat: string) => void;
+};
+
+function GlobalGrid({ counts, onPress }: GlobalGridProps) {
+  return (
+    <>
+      <Text className="text-eyebrow uppercase text-secondary px-4 pb-2">Categories</Text>
+      <View className="px-3 flex-row flex-wrap">
+        {CATEGORY_DISPLAY_ORDER.map((cat) => (
+          <View key={cat} style={{ width: '50%', paddingHorizontal: 4, marginBottom: 8 }}>
+            <CategoryTile
+              category={cat}
+              count={counts?.get(cat)}
+              onPress={() => onPress(cat)}
+            />
+          </View>
+        ))}
+      </View>
+    </>
+  );
+}
+
+type ByStoreGridProps = {
+  storeName: string;
+  isLoading: boolean;
+  isError: boolean;
+  categories: { root: string; productCount: number }[];
+  onPress: (root: string) => void;
+};
+
+function ByStoreGrid({ storeName, isLoading, isError, categories, onPress }: ByStoreGridProps) {
+  return (
+    <>
+      <View className="flex-row items-baseline justify-between px-4 pb-2">
+        <Text className="text-eyebrow uppercase text-secondary">
+          At {storeName}
+        </Text>
+        {categories.length > 0 ? (
+          <Text
+            className="text-caption text-tertiary"
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
+            {categories.length} categor{categories.length === 1 ? 'y' : 'ies'}
+          </Text>
+        ) : null}
+      </View>
+      {isLoading ? (
+        <View className="py-10 items-center">
+          <ActivityIndicator />
+        </View>
+      ) : isError ? (
+        <View className="px-4">
+          <Text className="text-body-sm text-tertiary">
+            Couldn't load this store's categories. Pull to refresh.
+          </Text>
+        </View>
+      ) : categories.length === 0 ? (
+        <View className="px-4">
+          <Text className="text-body-sm text-tertiary">
+            No vendor categories yet for this store. They appear once a scrape run
+            ingests this store's catalog.
+          </Text>
+        </View>
+      ) : (
+        <View className="px-3 flex-row flex-wrap">
+          {categories.map((cat) => (
+            <View
+              key={cat.root}
+              style={{ width: '50%', paddingHorizontal: 4, marginBottom: 8 }}
+            >
+              <VendorCategoryTile
+                root={cat.root}
+                count={cat.productCount}
+                onPress={() => onPress(cat.root)}
+              />
+            </View>
+          ))}
+        </View>
+      )}
+    </>
   );
 }

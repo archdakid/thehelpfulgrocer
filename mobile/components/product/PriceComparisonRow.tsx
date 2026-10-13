@@ -1,41 +1,181 @@
-import { Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Pressable, Text, View } from 'react-native';
 
 import Badge from '@/components/ui/Badge';
-import { formatPrice, formatRelativeTime, isStalePrice } from '@/lib/format';
+import {
+  formatPackEach,
+  formatPerUnitPrice,
+  formatPrice,
+  formatRelativeTime,
+  isStalePrice,
+} from '@/lib/format';
 import type { PriceAtStore } from '@/hooks/usePricesForProduct';
+import type { Product } from '@/hooks/useProduct';
 
 type PriceComparisonRowProps = {
   entry: PriceAtStore;
+  product: Pick<Product, 'unit_size' | 'unit_of_measure' | 'units_per_pack' | 'is_sold_by_weight'>;
   isCheapest: boolean;
 };
 
-export default function PriceComparisonRow({ entry, isCheapest }: PriceComparisonRowProps) {
+export default function PriceComparisonRow({
+  entry,
+  product,
+  isCheapest,
+}: PriceComparisonRowProps) {
+  const router = useRouter();
   const stale = isStalePrice(entry.observedAt);
+  const onSale =
+    entry.regularAmountMinorUnits != null &&
+    entry.regularAmountMinorUnits > entry.amountMinorUnits;
+  const muted = !entry.isAvailable;
+  const eq = entry.equivalentVariant;
 
-  return (
-    <View className="flex-row items-center px-4 py-3 bg-surface border-b-[0.5px] border-border min-h-14">
-      <View className="flex-1">
-        <Text className="text-body text-primary" numberOfLines={1}>
-          {entry.store.name}
-        </Text>
-        <View className="flex-row items-center mt-0.5">
+  // Out-of-stock takes precedence over best-price; you can't claim "best" on
+  // a row the user can't actually buy. When per-branch data narrows it to
+  // a partial picture (e.g. "in stock at 3 of 11"), surface that instead of
+  // a flat OOS pill.
+  const branch = entry.branchAvailability;
+  const partialStock =
+    !muted && branch != null && branch.available < branch.total;
+  const badge = muted
+    ? { label: branch ? `Out of stock at all ${branch.total} branches` : 'Out of stock', variant: 'danger' as const }
+    : partialStock && branch
+    ? { label: `In stock at ${branch.available} of ${branch.total}`, variant: 'warning' as const }
+    : isCheapest
+    ? { label: 'Best price', variant: 'accent' as const }
+    : null;
+
+  const perUnit = formatPerUnitPrice({
+    amountMinorUnits: entry.amountMinorUnits,
+    unitSize: product.unit_size,
+    unitOfMeasure: product.unit_of_measure,
+    currency: entry.currency,
+    isSoldByWeight: product.is_sold_by_weight ?? false,
+  });
+  const packEach = formatPackEach({
+    amountMinorUnits: entry.amountMinorUnits,
+    unitsPerPack: product.units_per_pack,
+    currency: entry.currency,
+  });
+
+  const equivalentSummary = eq
+    ? eq.direction === 'larger_pack'
+      ? `Pack variant: ${eq.otherProductName} (shelf ${formatPrice(eq.shelfAmountMinorUnits, entry.currency)} ÷ ${eq.scaleFactor})`
+      : `Pack variant: ${eq.scaleFactor}× ${eq.otherProductName} (${formatPrice(eq.shelfAmountMinorUnits, entry.currency)} ea)`
+    : null;
+
+  const content = (
+    <View
+      className="flex-row items-center px-4 py-3 bg-surface border-b-[0.5px] border-border min-h-14"
+      style={{ opacity: muted ? 0.55 : 1 }}
+    >
+      <View className="flex-1 min-w-0">
+        <View className="flex-row items-center" style={{ gap: 6 }}>
+          <Text className="text-body text-primary" numberOfLines={1} style={{ flexShrink: 1 }}>
+            {entry.store.name}
+          </Text>
+          {eq ? (
+            <View className="bg-brand-primary/10 rounded-full px-1.5 self-start" style={{ paddingVertical: 1 }}>
+              <Text
+                className="text-caption font-semibold text-brand-primary"
+                numberOfLines={1}
+              >
+                {eq.direction === 'larger_pack'
+                  ? `${eq.scaleFactor}× pack equiv.`
+                  : `${eq.scaleFactor}× single equiv.`}
+              </Text>
+            </View>
+          ) : null}
+          {entry.promoLabel ? (
+            <View className="bg-brand-accent/20 rounded-full px-1.5 self-start" style={{ paddingVertical: 1 }}>
+              <Text
+                className="text-caption font-semibold text-brand-accent"
+                numberOfLines={1}
+              >
+                {entry.promoLabel}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        <View className="flex-row items-center mt-0.5" style={{ gap: 8, flexWrap: 'wrap' }}>
           <Text className={`text-caption ${stale ? 'text-warning' : 'text-tertiary'}`}>
             {stale ? 'Stale · ' : ''}
             {formatRelativeTime(entry.observedAt)}
           </Text>
-          {isCheapest ? (
-            <View className="ml-2">
-              <Badge label="Best price" variant="accent" />
-            </View>
-          ) : null}
+          {badge ? <Badge label={badge.label} variant={badge.variant} /> : null}
         </View>
+        {equivalentSummary ? (
+          <Text
+            className="text-caption text-secondary mt-1"
+            numberOfLines={2}
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
+            {equivalentSummary}
+          </Text>
+        ) : null}
+        {perUnit || packEach ? (
+          <View className="mt-1" style={{ gap: 1 }}>
+            {perUnit ? (
+              <Text
+                className="text-caption text-secondary"
+                style={{ fontVariant: ['tabular-nums'] }}
+              >
+                {perUnit}
+              </Text>
+            ) : null}
+            {packEach ? (
+              <Text
+                className="text-caption text-secondary"
+                style={{ fontVariant: ['tabular-nums'] }}
+              >
+                {packEach}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
       </View>
-      <Text
-        className={`text-mono font-semibold ml-3 ${stale ? 'text-tertiary' : 'text-primary'}`}
-        style={{ fontVariant: ['tabular-nums'] }}
-      >
-        {formatPrice(entry.amountMinorUnits, entry.currency)}
-      </Text>
+      <View className="items-end ml-3" style={{ gap: 2 }}>
+        {onSale && entry.regularAmountMinorUnits != null ? (
+          <Text
+            className="text-caption text-tertiary"
+            style={{
+              fontVariant: ['tabular-nums'],
+              textDecorationLine: 'line-through',
+            }}
+          >
+            {formatPrice(entry.regularAmountMinorUnits, entry.currency)}
+          </Text>
+        ) : null}
+        <Text
+          className={`text-mono font-semibold ${stale || muted ? 'text-tertiary' : onSale ? 'text-brand-accent' : 'text-primary'}`}
+          style={{ fontVariant: ['tabular-nums'] }}
+        >
+          {formatPrice(entry.amountMinorUnits, entry.currency)}
+        </Text>
+        {eq ? (
+          <Text
+            className="text-[11px] text-tertiary"
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
+            equiv.
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
+
+  if (eq) {
+    return (
+      <Pressable
+        onPress={() => router.push(`/product/${eq.otherProductId}`)}
+        accessibilityRole="button"
+        accessibilityLabel={`View linked pack variant ${eq.otherProductName}`}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return content;
 }

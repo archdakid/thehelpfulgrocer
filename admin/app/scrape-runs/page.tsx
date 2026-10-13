@@ -1,6 +1,9 @@
 import Link from 'next/link';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import ScraperControlPanel, {
+  type VendorSummary,
+} from './ScraperControlPanel';
 
 const STATUS_TONE: Record<string, string> = {
   running: 'bg-accent/10 text-accent',
@@ -16,21 +19,14 @@ const STATUS_LABEL: Record<string, string> = {
   failed: 'Failed',
 };
 
-type ScrapeRunRow = {
-  id: string;
-  vendor: string;
-  mode: string;
-  status: string;
-  started_at: string;
-  ended_at: string | null;
-  rows_received: number;
-  locations_upserted: number;
-  products_upserted: number;
-  prices_inserted: number;
-  availability_writes: number;
-  errors: unknown;
-  fatal_error: string | null;
-};
+const VENDOR_META: Array<{
+  key: 'superpharm' | 'massy' | 'pricesmart';
+  label: string;
+}> = [
+  { key: 'superpharm', label: 'SuperPharm' },
+  { key: 'massy', label: 'Massy Stores' },
+  { key: 'pricesmart', label: 'PriceSmart' },
+];
 
 function formatDuration(startIso: string, endIso: string | null): string {
   if (!endIso) return '—';
@@ -45,34 +41,131 @@ function formatDuration(startIso: string, endIso: string | null): string {
   return `${minutes}m ${seconds}s`;
 }
 
-export default async function ScrapeRunsPage() {
+type Props = {
+  searchParams: Promise<{ vendor?: string }>;
+};
+
+export default async function ScrapeRunsPage({ searchParams }: Props) {
+  const { vendor: vendorFilterRaw } = await searchParams;
+  const vendorFilter = VENDOR_META.find((v) => v.key === vendorFilterRaw)?.key ?? 'all';
+
   const supabase = await createSupabaseServerClient();
 
-  // scrape_runs landed in migration 0024; gen-types hasn't been re-run yet,
-  // so the typed client doesn't know about it. Same cast idiom the
-  // /stores/[id]/locations page uses for store_locations.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sb = supabase as any;
-  const { data, error } = (await sb
+  let listQuery = supabase
     .from('scrape_runs')
     .select(
       `id, vendor, mode, status, started_at, ended_at, rows_received,
        locations_upserted, products_upserted, prices_inserted,
-       availability_writes, errors, fatal_error`,
+       availability_writes, categories_writes, errors, fatal_error`,
     )
     .order('started_at', { ascending: false })
-    .limit(100)) as {
-    data: ScrapeRunRow[] | null;
-    error: { message: string } | null;
+    .limit(100);
+
+  if (vendorFilter !== 'all') {
+    listQuery = listQuery.eq('vendor', vendorFilter);
+  }
+
+  // Fetch latest runs per vendor in parallel so the freshness cards are accurate
+  // even when one vendor's 100 chunks push another vendor off the top-100 list.
+  const [listRes, spRes, massyRes, psRes] = await Promise.all([
+    listQuery,
+    supabase
+      .from('scrape_runs')
+      .select('vendor, status, started_at, products_upserted, prices_inserted')
+      .eq('vendor', 'superpharm')
+      .order('started_at', { ascending: false })
+      .limit(200),
+    supabase
+      .from('scrape_runs')
+      .select('vendor, status, started_at, products_upserted, prices_inserted')
+      .eq('vendor', 'massy')
+      .order('started_at', { ascending: false })
+      .limit(200),
+    supabase
+      .from('scrape_runs')
+      .select('vendor, status, started_at, products_upserted, prices_inserted')
+      .eq('vendor', 'pricesmart')
+      .order('started_at', { ascending: false })
+      .limit(200),
+  ]);
+
+  const { data, error } = listRes;
+
+  const byVendorRows = {
+    superpharm: spRes.data ?? [],
+    massy: massyRes.data ?? [],
+    pricesmart: psRes.data ?? [],
   };
 
+  const vendorSummaries: VendorSummary[] = VENDOR_META.map(({ key, label }) => {
+    const vRows = byVendorRows[key];
+    const latest = vRows[0] ?? null;
+    const latestSuccess =
+      vRows.find((r) => r.status === 'success' || r.status === 'partial') ??
+      null;
+    // Sum counters across chunks belonging to the most recent batch (within 2h of latest run)
+    const latestTime = latest ? new Date(latest.started_at).getTime() : 0;
+    const recentSessionRows = latest
+      ? vRows.filter(
+          (r) => latestTime - new Date(r.started_at).getTime() <= 2 * 3600_000,
+        )
+      : [];
+
+    return {
+      vendor: key,
+      displayName: label,
+      lastRunAt: latest?.started_at ?? null,
+      lastSuccessAt: latestSuccess?.started_at ?? null,
+      lastStatus: latest?.status ?? null,
+      totalRunsShown: vRows.length,
+      recentProductsUpserted: recentSessionRows.reduce(
+        (acc, r) => acc + (r.products_upserted ?? 0),
+        0,
+      ),
+      recentPricesInserted: recentSessionRows.reduce(
+        (acc, r) => acc + (r.prices_inserted ?? 0),
+        0,
+      ),
+    };
+  });
+
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Scrape runs</h1>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h1 className="text-xl font-semibold">Scrape runs &amp; Control Center</h1>
         <span className="text-sm text-muted">
-          Last {data?.length ?? 0} runs · audit-only (writes by ingest-scrape)
+          Showing last {data?.length ?? 0} chunk runs
         </span>
+      </div>
+
+      <ScraperControlPanel vendors={vendorSummaries} />
+
+      <div className="flex items-center justify-between flex-wrap gap-2 pt-2">
+        <nav className="flex gap-2 flex-wrap">
+          {[
+            { key: 'all', label: 'All vendors' },
+            ...VENDOR_META,
+          ].map((tab) => {
+            const active = tab.key === vendorFilter;
+            const href =
+              tab.key === 'all'
+                ? '/scrape-runs'
+                : `/scrape-runs?vendor=${tab.key}`;
+            return (
+              <Link
+                key={tab.key}
+                href={href}
+                className={`px-3 py-1.5 rounded-full text-sm border ${
+                  active
+                    ? 'bg-text text-bg border-text'
+                    : 'bg-surface text-text border-border hover:bg-bg'
+                }`}
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
+        </nav>
       </div>
 
       {error ? (
@@ -81,10 +174,9 @@ export default async function ScrapeRunsPage() {
         </div>
       ) : (data ?? []).length === 0 ? (
         <div className="bg-surface border border-border rounded-lg p-10 text-center">
-          <p className="text-text font-medium">No scrape runs yet.</p>
+          <p className="text-text font-medium">No scrape runs found.</p>
           <p className="text-sm text-muted mt-1">
-            Once the runner POSTs its first payload to{' '}
-            <span className="font-mono">ingest-scrape</span>, runs land here.
+            Use the control panel above to trigger a scrape or cached ingest.
           </p>
         </div>
       ) : (
@@ -124,7 +216,8 @@ export default async function ScrapeRunsPage() {
                         {row.locations_upserted} locations ·{' '}
                         {row.products_upserted} products ·{' '}
                         {row.prices_inserted} prices ·{' '}
-                        {row.availability_writes} availability
+                        {row.availability_writes} availability ·{' '}
+                        {row.categories_writes ?? 0} categories
                         {errorCount > 0 ? ` · ${errorCount} row error${errorCount === 1 ? '' : 's'}` : ''}
                         {row.fatal_error ? ` · ${row.fatal_error.slice(0, 80)}` : ''}
                       </p>

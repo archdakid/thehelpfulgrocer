@@ -20,21 +20,21 @@ The data backbone is a blend of:
 
 | Layer | Tech | Why |
 |---|---|---|
-| Mobile | Expo SDK + React Native + TypeScript | One codebase, iOS + Android, all native APIs we need |
+| Mobile | Expo SDK 54 + React Native + TypeScript | One codebase, iOS + Android, all native APIs we need |
 | Routing | Expo Router | File-based, type-safe |
 | State | Zustand + React Query | Lightweight, no boilerplate, great cache invalidation |
-| Styling | NativeWind (Tailwind for RN) | Fast iteration, consistent design tokens |
+| Styling | NativeWind v4 (Tailwind v3 for RN) | Fast iteration, consistent design tokens |
 | Backend | Supabase | Postgres + Auth + Storage + Edge Functions, generous free tier |
 | Database | Postgres (via Supabase) | Relational, RLS-protected, SQL-first |
-| Camera | react-native-vision-camera | High performance, ML Kit integration |
-| Barcode | vision-camera-code-scanner | Built on ML Kit, free, fast |
-| AI Vision | Google ML Kit (on-device) | Free, no per-scan cost |
-| OCR (receipts) | ML Kit Text Recognition | Free, on-device |
+| Camera & Barcode | `react-native-vision-camera` v4 (`useCodeScanner`) | Hardware `AVCaptureMetadataOutput` (iOS) + ML Kit (Android), ready for AI vision |
+| AI Vision | Google ML Kit / VisionCamera | Free, no per-scan cost |
+| OCR (receipts & circulars) | Gemini 2.5 Flash (`process-receipt`, `parse-circular`) | Structured JSON extraction via Supabase Edge Functions |
+| Duplicate triage | NVIDIA NIM (Meta Llama 3.3 70B via `triage-duplicates`) | 40 RPM free tier, automated `same_product` / `pack_variant` classification |
 | Background removal | rembg (open source, self-hosted) | Apache 2.0, runs as Supabase Edge Function |
-| Circular parsing | Claude API (vision) | Admin-only batch job, low cost |
 | Image rendering | expo-image | Disk cache, blurhash, performance |
 | Animation | react-native-reanimated | UI-thread animations, never drops frames |
-| Admin panel | Next.js + Supabase | Web-based, deployed on Vercel free tier |
+| Admin panel | Next.js 15 + Supabase | Web-based, deployed on Vercel free tier |
+| iOS Sideloading (Windows) | `xtool` (WSL2 Ubuntu) + GitHub Actions `macos-15` | Compile unsigned `.ipa` on CI, sign & sideload to physical iPhone via USB |
 
 ---
 
@@ -109,6 +109,7 @@ smartshopper/
 | Why we chose X over Y | `docs/DECISIONS.md` |
 | Big-picture: what we're building and why | `docs/PROJECT_OVERVIEW.md` |
 | In-flight design intent (mockups + notes) | `design/` (start with `design/NOTES.md`) |
+| Native iOS sideloading on Windows (`xtool`) | `.agents/skills/xtool-ios/SKILL.md` |
 
 ---
 
@@ -117,20 +118,27 @@ smartshopper/
 ```bash
 # Mobile dev
 cd mobile
-npm install
-npx expo start              # Start dev server (scan QR with Expo Go)
+npm install --legacy-peer-deps
+npx expo start              # Start dev server
+npx expo start --dev-client # Start Metro for xtool-sideloaded iOS dev build
 npx expo start --ios        # Open iOS simulator
 npx expo start --android    # Open Android emulator
+
+# Native iOS sideloading on Windows (via WSL2 xtool)
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\xtool-ios\scripts\sideload-ipa.ps1 -IpaPath .\SmartShopper-unsigned.ipa
 
 # Database
 npx supabase start          # Start local Supabase
 npx supabase db reset       # Reset local DB and re-run migrations
-npx supabase gen types typescript --local > mobile/types/database.ts
+npx supabase gen types typescript --linked > mobile/types/database.ts
 
 # Admin panel
 cd admin
-npm install
+npm install --legacy-peer-deps
 npm run dev
+
+# Scrapers (local out-of-repo runner)
+node scrapers/run-vendor.js all --mode full
 
 # Type check (run before every commit)
 cd mobile && npm run typecheck

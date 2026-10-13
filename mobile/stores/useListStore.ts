@@ -10,6 +10,12 @@ export type ListItem = {
   productId: string | null;
   brand: string | null;
   category: CategoryId | null;
+  // Product thumbnail captured at the moment the item was added. Avoids
+  // an extra round trip on render — the row falls back to the category
+  // glyph when imageUrl is null. Null on custom items and on products
+  // added before v4 of the persisted state (the migrate handler nulls
+  // them so the rows render without crashing until the user re-adds).
+  imageUrl: string | null;
   quantity: number;
   checked: boolean;
   addedAt: number;
@@ -23,6 +29,7 @@ type ListState = {
     name: string;
     brand: string | null;
     category: CategoryId | null;
+    imageUrl: string | null;
   }) => void;
   removeItem: (id: string) => void;
   toggleChecked: (id: string) => void;
@@ -48,6 +55,7 @@ export const useListStore = create<ListState>()(
             productId: null,
             brand: null,
             category: null,
+            imageUrl: null,
             quantity: 1,
             checked: false,
             addedAt: Date.now(),
@@ -71,6 +79,7 @@ export const useListStore = create<ListState>()(
             productId: product.id,
             brand: product.brand,
             category: product.category,
+            imageUrl: product.imageUrl,
             quantity: 1,
             checked: false,
             addedAt: Date.now(),
@@ -97,7 +106,7 @@ export const useListStore = create<ListState>()(
     {
       name: 'smartshopper-list',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 3,
+      version: 4,
       migrate: (persistedState, version) => {
         if (persistedState && typeof persistedState === 'object') {
           const state = persistedState as { items?: unknown[] };
@@ -109,6 +118,7 @@ export const useListStore = create<ListState>()(
                 item.brand = item.brand ?? null;
                 item.category = item.category ?? null;
               }
+              if (version < 4) item.imageUrl = item.imageUrl ?? null;
               return item;
             });
           }

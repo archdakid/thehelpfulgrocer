@@ -153,12 +153,14 @@ export default function HomeScreen() {
     name: string;
     brand: string | null;
     category: string | null;
+    image_url: string | null;
   }) {
     addProductItem({
       id: product.id,
       name: product.name,
       brand: product.brand,
       category: isCategoryId(product.category) ? product.category : null,
+      imageUrl: product.image_url,
     });
   }
 

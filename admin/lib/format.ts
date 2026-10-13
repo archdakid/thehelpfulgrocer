@@ -12,6 +12,8 @@ export function reasonLabel(reason: string): string {
       return 'Low confidence';
     case 'auto_created_product':
       return 'Auto-created';
+    case 'potential_duplicate':
+      return 'Potential duplicate';
     default:
       return reason;
   }
@@ -26,6 +28,8 @@ export function reasonTone(reason: string): string {
     case 'low_confidence':
       return 'bg-warn/10 text-warn';
     case 'auto_created_product':
+      return 'bg-accent/10 text-accent';
+    case 'potential_duplicate':
       return 'bg-accent/10 text-accent';
     default:
       return 'bg-border text-muted';

@@ -1,15 +1,19 @@
 import Link from 'next/link';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { PRODUCT_CATEGORIES, type ProductCategory } from './categories';
 import NewProductForm from './NewProductForm';
 
 type Props = {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; category?: string }>;
 };
 
 export default async function ProductsPage({ searchParams }: Props) {
-  const { q: qRaw } = await searchParams;
+  const { q: qRaw, category: catRaw } = await searchParams;
   const q = (qRaw ?? '').trim();
+  const category = PRODUCT_CATEGORIES.includes(catRaw as ProductCategory)
+    ? (catRaw as ProductCategory)
+    : '';
 
   const supabase = await createSupabaseServerClient();
 
@@ -25,6 +29,10 @@ export default async function ProductsPage({ searchParams }: Props) {
     // patterns (a literal % in the query would otherwise match anything).
     const escaped = q.replace(/[%_]/g, '\\$&');
     query = query.or(`name.ilike.%${escaped}%,brand.ilike.%${escaped}%`);
+  }
+
+  if (category) {
+    query = query.eq('category', category);
   }
 
   const { data, error } = await query;
@@ -65,27 +73,40 @@ export default async function ProductsPage({ searchParams }: Props) {
             ) : null}
           </Link>
           <span className="text-sm text-muted">
-            {rows.length} shown{q ? ` for "${q}"` : ''} · {withImage} with admin image
+            {rows.length} shown{q ? ` for "${q}"` : ''}
+            {category ? ` in ${category}` : ''} · {withImage} with admin image
           </span>
         </div>
       </div>
 
       <div className="flex flex-col gap-3">
-        <form className="flex gap-2">
+        <form className="flex flex-wrap gap-2">
           <input
             type="search"
             name="q"
             defaultValue={q}
             placeholder="Search by name or brand…"
-            className="flex-1 border border-border rounded px-3 py-2 bg-bg text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            className="flex-1 min-w-[200px] border border-border rounded px-3 py-2 bg-bg text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           />
+          <select
+            name="category"
+            defaultValue={category}
+            className="border border-border rounded px-3 py-2 bg-bg text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            <option value="">All categories</option>
+            {PRODUCT_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
           <button
             type="submit"
             className="bg-text text-bg rounded px-4 py-2 text-sm font-medium hover:opacity-90"
           >
-            Search
+            Filter
           </button>
-          {q ? (
+          {q || category ? (
             <Link
               href="/products"
               className="text-sm text-muted hover:text-text px-3 py-2"

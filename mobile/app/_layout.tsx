@@ -1,7 +1,7 @@
 import '../global.css';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Stack } from 'expo-router';
+import { ErrorBoundary, Stack } from 'expo-router';
 import { colorScheme as nwColorScheme } from 'nativewind';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -9,6 +9,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { bootstrapAuth } from '@/hooks/useAuth';
 import { useUIStore } from '@/stores/useUIStore';
+
+export { ErrorBoundary };
 
 const queryClient = new QueryClient({
   defaultOptions: {

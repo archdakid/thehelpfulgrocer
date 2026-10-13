@@ -4,7 +4,18 @@ import { revalidatePath } from 'next/cache';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
-type ResolveAction = 'confirm' | 'correct' | 'reject' | 'merge';
+type ResolveAction =
+  | 'confirm'
+  | 'correct'
+  | 'reject'
+  | 'merge'
+  | 'merge_duplicate'
+  | 'pack_variant';
+
+export type PackVariantPayload = {
+  largerIs: 'flagged' | 'candidate';
+  scaleFactor: number;
+};
 
 // Mirror of the Edge Function's Edits shape. `null` on a nullable field
 // means "explicitly clear it"; absence means "leave alone." Brand and
@@ -24,6 +35,7 @@ type ResolvePayload = {
   targetProductId?: string | null;
   notes?: string | null;
   edits?: ResolveEdits;
+  packVariant?: PackVariantPayload;
 };
 
 export async function resolveFlaggedItem(

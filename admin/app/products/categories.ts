@@ -1,4 +1,4 @@
-// Mirrors migration 0004's CHECK constraint on products.category and the
+// Mirrors migration 0032's CHECK constraint on products.category and the
 // allow-list inside the manage-product / resolve-flagged-item Edge
 // Functions. Lives in its own module because Next.js server-action files
 // (`'use server'`) can only export async functions — re-exporting a
@@ -13,6 +13,11 @@ export const PRODUCT_CATEGORIES = [
   'frozen',
   'beverage',
   'snacks',
+  'household',
+  'personal_care',
+  'pharmacy',
+  'baby',
 ] as const;
 
 export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
+

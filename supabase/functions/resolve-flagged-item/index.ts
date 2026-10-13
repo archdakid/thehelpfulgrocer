@@ -29,9 +29,29 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-type Reason = 'unmatched' | 'low_confidence' | 'auto_created_product';
-type Action = 'confirm' | 'correct' | 'reject' | 'merge';
-type Resolution = 'confirmed' | 'corrected' | 'rejected' | 'merged';
+type Reason =
+  | 'unmatched'
+  | 'low_confidence'
+  | 'auto_created_product'
+  | 'potential_duplicate';
+type Action =
+  | 'confirm'
+  | 'correct'
+  | 'reject'
+  | 'merge'
+  | 'merge_duplicate'
+  | 'pack_variant';
+type Resolution =
+  | 'confirmed'
+  | 'corrected'
+  | 'rejected'
+  | 'merged'
+  | 'pack_variant';
+
+type PackVariantSpec = {
+  largerIs: 'flagged' | 'candidate';
+  scaleFactor: number;
+};
 
 // Optional per-resolve edits the admin can apply alongside the action.
 // `productName`, `brand`, and `category` only apply to
@@ -56,9 +76,9 @@ type Edits = {
   unitPriceMinorUnits?: number | null;
 };
 
-// Mirrors the CHECK constraint on products.category (migration 0004) and
-// the manage-product Edge Function's allow-list. Drift here means valid
-// admin edits get rejected, not bad data lands.
+// Mirrors the CHECK constraint on products.category (migration 0004,
+// expanded in 0032) and the manage-product Edge Function's allow-list.
+// Drift here means valid admin edits get rejected, not bad data lands.
 const CATEGORIES = new Set([
   'produce',
   'dairy',
@@ -68,6 +88,10 @@ const CATEGORIES = new Set([
   'frozen',
   'beverage',
   'snacks',
+  'household',
+  'personal_care',
+  'pharmacy',
+  'baby',
 ]);
 
 type Payload = {
@@ -76,6 +100,7 @@ type Payload = {
   targetProductId?: unknown;
   notes?: unknown;
   edits?: unknown;
+  packVariant?: unknown;
 };
 
 Deno.serve(async (req) => {
@@ -91,9 +116,20 @@ Deno.serve(async (req) => {
       typeof body?.targetProductId === 'string' ? body.targetProductId : null;
     const notes = typeof body?.notes === 'string' ? body.notes : null;
     const edits = parseEdits(body?.edits);
+    const packVariant = parsePackVariant(body?.packVariant);
 
     if (!flaggedItemId) return jsonError(400, 'Missing flaggedItemId');
-    if (!action || !['confirm', 'correct', 'reject', 'merge'].includes(action)) {
+    if (
+      !action ||
+      ![
+        'confirm',
+        'correct',
+        'reject',
+        'merge',
+        'merge_duplicate',
+        'pack_variant',
+      ].includes(action)
+    ) {
       return jsonError(400, 'Invalid action');
     }
 
@@ -136,6 +172,7 @@ Deno.serve(async (req) => {
       targetProductId,
       notes,
       edits,
+      packVariant,
       resolvedBy: adminId,
     });
     return jsonOk(result);
@@ -152,19 +189,24 @@ type ResolveCtx = {
   targetProductId: string | null;
   notes: string | null;
   edits: Edits;
+  packVariant: PackVariantSpec | null;
   resolvedBy: string;
 };
 
 async function resolve(admin: SupabaseClient, ctx: ResolveCtx) {
-  // Pull the full context. We need the receipt-level store/currency/date
-  // to backfill prices, plus the auto_created_product_id for delete cases.
+  // Pull the full context. Receipt context (store/currency/date) drives
+  // backfills for receipt-origin rows; flagged_product_id /
+  // candidate_product_id drive ingest-origin (potential_duplicate) merges.
+  // Receipt embed is a LEFT JOIN now (no `!inner`) so ingest-origin rows
+  // with receipt_item_id null still load.
   const { data: flag, error } = await (admin.from('flagged_items') as any)
     .select(
       `
         id, reason, resolved_at, auto_created_product_id,
-        receipt_item:receipt_items!inner (
+        flagged_product_id, candidate_product_id, match_score,
+        receipt_item:receipt_items (
           id, raw_text, quantity, unit_price_minor_units, line_total_minor_units, matched_product_id,
-          receipt:receipts!inner (
+          receipt:receipts (
             id, store_id, currency, captured_at, created_at
           )
         )
@@ -179,14 +221,23 @@ async function resolve(admin: SupabaseClient, ctx: ResolveCtx) {
   const reason = flag.reason as Reason;
   const item = flag.receipt_item;
   const receipt = item?.receipt;
+
+  // Validate action ↔ reason combinations. The UI restricts these but a
+  // direct API caller could try anything — fail loud rather than silently.
+  validateActionReason(ctx.action, reason);
+
+  // potential_duplicate is the ingest-origin path: no receipt context,
+  // operates only on the two `products` rows. Branch out so the
+  // receipt-required code below doesn't crash on null item/receipt.
+  if (reason === 'potential_duplicate') {
+    return await resolvePotentialDuplicate(admin, ctx, flag);
+  }
+
   if (!item || !receipt) throw new Error('Missing item/receipt context');
 
   const observedAt = receipt.captured_at ?? receipt.created_at;
   const currency = receipt.currency ?? 'TTD';
 
-  // Validate action ↔ reason combinations. The UI restricts these but a
-  // direct API caller could try anything — fail loud rather than silently.
-  validateActionReason(ctx.action, reason);
   if ((ctx.action === 'correct' || ctx.action === 'merge') && !ctx.targetProductId) {
     throw new Error(`${ctx.action} requires targetProductId`);
   }
@@ -317,10 +368,126 @@ function validateActionReason(action: Action, reason: Reason) {
     unmatched: ['correct', 'reject'],
     low_confidence: ['confirm', 'correct', 'reject'],
     auto_created_product: ['confirm', 'merge', 'reject'],
+    potential_duplicate: ['merge_duplicate', 'pack_variant', 'reject'],
   };
   if (!allowed[reason].includes(action)) {
     throw new Error(`Action '${action}' not valid for reason '${reason}'`);
   }
+}
+
+// Ingest-origin merge/equivalence resolver. Three valid actions on potential_duplicate:
+//
+//   - merge_duplicate: collapse flagged_product_id into candidate_product_id
+//     (or admin-picked targetProductId if they prefer a different winner).
+//     Calls the merge_products() Postgres function which moves prices,
+//     aliases, availability, categories atomically and deletes the loser.
+//   - pack_variant: link the two products as a pack variant in
+//     product_equivalents (larger_id -> smaller_id with scale_factor > 1)
+//     and mark resolution = 'pack_variant'.
+//   - reject: admin says "these aren't actually duplicates, keep both."
+//     Just marks the flag resolved.
+//
+// The flagged_items row's flagged_product_id and candidate_product_id are
+// both ON DELETE SET NULL — merge_products() repoints them at the winner
+// before the loser delete, so the audit row survives with coherent
+// references.
+async function resolvePotentialDuplicate(
+  admin: SupabaseClient,
+  ctx: ResolveCtx,
+  flag: any,
+): Promise<{ ok: true; resolution: Resolution }> {
+  const flaggedProductId = flag.flagged_product_id as string | null;
+  if (!flaggedProductId) {
+    throw new Error('potential_duplicate flag has no flagged_product_id');
+  }
+
+  let resolution: Resolution;
+
+  if (ctx.action === 'merge_duplicate') {
+    // Default winner is the original candidate the matcher suggested. Admin
+    // can override via targetProductId if they decide a different existing
+    // product is the better target (e.g. the candidate is itself a stale
+    // duplicate of a third row).
+    const winnerId = ctx.targetProductId ?? (flag.candidate_product_id as string | null);
+    if (!winnerId) {
+      throw new Error('merge_duplicate requires targetProductId or candidate_product_id');
+    }
+    if (winnerId === flaggedProductId) {
+      throw new Error('merge_duplicate: target equals flagged product');
+    }
+
+    const { error: mErr } = await (admin.rpc as any)('merge_products', {
+      p_loser_id: flaggedProductId,
+      p_winner_id: winnerId,
+    });
+    if (mErr) throw new Error(`Merge failed: ${mErr.message}`);
+    resolution = 'merged';
+  } else if (ctx.action === 'pack_variant') {
+    const candidateId =
+      ctx.targetProductId ?? (flag.candidate_product_id as string | null);
+    if (!candidateId) {
+      throw new Error('pack_variant requires candidate_product_id or targetProductId');
+    }
+    if (candidateId === flaggedProductId) {
+      throw new Error('pack_variant: target equals flagged product');
+    }
+    if (!ctx.packVariant) {
+      throw new Error('pack_variant requires packVariant { largerIs, scaleFactor }');
+    }
+    const { largerIs, scaleFactor } = ctx.packVariant;
+    if (!Number.isFinite(scaleFactor) || scaleFactor <= 1) {
+      throw new Error('scaleFactor must be a number > 1');
+    }
+    const largerId = largerIs === 'flagged' ? flaggedProductId : candidateId;
+    const smallerId = largerIs === 'flagged' ? candidateId : flaggedProductId;
+
+    const { error: eqErr } = await (admin.from('product_equivalents') as any)
+      .upsert(
+        {
+          product_id: largerId,
+          equivalent_product_id: smallerId,
+          scale_factor: scaleFactor,
+          source: 'admin',
+          notes: ctx.notes ?? null,
+          created_by: ctx.resolvedBy,
+        },
+        { onConflict: 'product_id,equivalent_product_id' },
+      );
+    if (eqErr) {
+      throw new Error(`Insert product_equivalents failed: ${eqErr.message}`);
+    }
+    resolution = 'pack_variant';
+  } else if (ctx.action === 'reject') {
+    // "Not actually a duplicate" — keep both products as-is.
+    resolution = 'rejected';
+  } else {
+    throw new Error(`Action '${ctx.action}' not valid for potential_duplicate`);
+  }
+
+  const { error: resErr } = await (admin.from('flagged_items') as any)
+    .update({
+      resolved_at: new Date().toISOString(),
+      resolved_by: ctx.resolvedBy,
+      resolution,
+      notes: ctx.notes,
+    })
+    .eq('id', ctx.flaggedItemId);
+  if (resErr) throw new Error(`Mark resolved failed: ${resErr.message}`);
+
+  return { ok: true, resolution };
+}
+
+function parsePackVariant(value: unknown): PackVariantSpec | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const largerIs =
+    v.largerIs === 'flagged' || v.largerIs === 'candidate' ? v.largerIs : null;
+  const scaleFactor =
+    typeof v.scaleFactor === 'number' && Number.isFinite(v.scaleFactor)
+      ? v.scaleFactor
+      : null;
+  if (!largerIs || scaleFactor === null) return null;
+  return { largerIs, scaleFactor };
 }
 
 async function contributePrice(

@@ -537,6 +537,175 @@ A separate `product_equivalents` table (formally linking "case of 24" to "single
 
 ---
 
+## 2026-05-08 — Per-store vendor categories as a join table; preserve verbatim
+
+**Context:** `products.category` is a single 8-bucket global enum (`produce | dairy | meat | bakery | pantry | frozen | beverage | snacks`). It works for the cross-store Browse grid users see today — eight tiles, one identity per product. It's the wrong shape for what scrapers actually return: Massy publishes a ~1000-node tree where one product can sit in multiple categories at once, PriceSmart has its own warehouse-club taxonomy, SuperPharm has a third. Flattening all of that into eight buckets throws away most of the value once scraped catalogs land.
+
+**Decision:** Add `product_store_categories(product_id, store_id, vendor_path, vendor_path_root, source, first_seen_at, last_seen_at)` as a join table preserving each retailer's native taxonomy verbatim. `unique (product_id, store_id, vendor_path)` so a product in N categories at one store produces N rows. The runner joins path segments with ` › ` and supplies `vendor_path_root` (first segment) so the function is decoupled from any separator convention. `products.category` stays as the global / search-canonical dimension and is left untouched.
+
+The mobile Browse tab gains a Global / By store toggle: Global renders the existing 8-bucket grid (no change); By store renders top-level vendor tiles (`vendor_path_root`) for the active store. The toggle only renders when a store is selected — the by-store view has nothing to show otherwise.
+
+A formal `vendor_categories` reference table (deduping paths and offering admin curation) is **not** added now.
+
+**Reasoning:**
+- Each retailer's taxonomy is the unit of identity for that retailer. Collapsing PriceSmart's "Beverages › Soft Drinks › Cola" to "beverage" loses every drill-down a user might use to navigate that store's catalog. The join table preserves the source-of-truth path; the global category remains for search and cross-store browsing.
+- A join table (rather than a column on `products`) handles the "in multiple categories at once" case Massy actually exhibits, without forcing the client to split a delimited string at read time.
+- `vendor_path_root` is denormalized rather than computed on read because the Browse tile-grid query is the hot path — `(store_id, vendor_path_root)` is indexable and the runner is the right place to own the separator convention. A `split_part(vendor_path, ' › ', 1)` generated column would tie the schema to the separator forever; an explicit column lets the runner change conventions without a migration.
+- `last_seen_at` (bumped on upsert) gives admins a way to spot stale assignments after a vendor reorganizes its tree, without forcing a row delete-and-rewrite per re-scrape.
+- A `vendor_categories` reference table would normalize paths across products and let admins rename one path globally — but that's curation work admins explicitly don't want to do (vendor labelling is the unit of identity, not a thing to clean up). If admins ever want to suppress one specific awful path, a column on this join table (`hidden boolean`) is a one-line addition; we don't pay for that capability up front.
+
+**Trade-offs accepted:**
+- Browse becomes more powerful but more idiosyncratic: every retailer's taxonomy quirks come through verbatim. PriceSmart's all-caps "MEMBER'S SELECTION", Massy's "On Sale" cross-cutting category, SuperPharm's pharmacy-vs-grocery split — all of it lands as-is. We accept that this is what users actually see when they walk into the store, so it's the most honest representation.
+- Path text is duplicated across many rows (Massy has ~1000 categories × thousands of products). Storage cost is negligible at MVP scale; if it becomes a concern, the path can be hoisted into a `vendor_categories(id, store_id, path)` table later — the join table's `vendor_path` becomes a FK.
+- Receipt + admin manual entry don't write here. A receipt-attributed product has no per-store taxonomy assignment until a scraper sees it. That's correct: receipts attribute *prices*, not *taxonomy memberships*. Acceptable asymmetry.
+- Counter `categories_writes` added to `scrape_runs` so admins see "did the categories pipeline work this run?" alongside the existing prices/availability counters. One extra column on an already-evolving audit table.
+
+---
+
+## 2026-05-09 — Caribbean UPC unreliability; cross-vendor matching is fuzzy + admin-curated
+
+**Context:** The original `ingest-scrape` design (2026-05-05 entry) leaned on UPC as the cross-vendor identity tier: vendors send `product.upc`, the function looks up an existing `products` row by UPC, otherwise inserts new. That implicitly assumed UPCs would be stable across the three primary vendors. After looking at real scrape data:
+
+- **SuperPharm**: SKUs are internal product numbers (`413031517`). No UPC field in the API.
+- **Massy**: SKUs are 13-digit numeric strings (`0084960708010`) that *look* like EAN-13s but are not actual GTINs — verified by physically comparing one purchased item's barcode to its Massy SKU. Caribbean retailers commonly assign their own internal codes that follow EAN-13 format conventions.
+- **PriceSmart**: Enriched data (2,898 products) contains zero UPC/GTIN/EAN/barcode attributes anywhere. The `attributes` blob carries pricing, weights, descriptions, sale state — no product GTINs at all.
+
+The Caribbean retail reality: many products are region-exclusive with locally-assigned codes; even universal-brand items rarely surface their global UPC through the vendor APIs we have access to.
+
+**Decision:** Drop UPC as the primary cross-vendor matching tier. Identity is established via fuzzy matching + admin curation. Vendor SKUs are NEVER promoted to `products.upc` — each goes in as `INTERNAL-<VENDOR>-<sku>` (existing convention) and identity is established by other means.
+
+The matching problem splits into two:
+
+1. **Identity match** (same physical item across stores): trigram on `lower(brand || ' ' || name)` plus `unit_size`/`unit_of_measure` discriminators, run inside `ingest-scrape` after UPC and vendor-alias misses. Auto-link at high confidence (target ≥0.85), flag for admin review at medium (target 0.60–0.85, new `flagged_items` reason `potential_duplicate`), insert new below. Thresholds tuned against real flagged dupes once all three vendors have ingested.
+
+2. **Pack-variant equivalence** (same physical item, different pack sizes — Massy single can vs PriceSmart case-of-24): a separate `product_equivalents(product_id, equivalent_product_id, scale_factor)` table. Admin-curated, trigram-suggested via "case" / "pack" / "x-pack" patterns. Compare-sheet pulls equivalents and divides by `scale_factor` for per-unit comparability. `units_per_pack` stays on `products` (each pack variant is its own product, per 2026-05-05); the new table bridges them.
+
+**Reasoning:**
+
+- UPC-based matching is the gold standard globally but doesn't apply here. Pretending otherwise (e.g. promoting Massy's 13-digit SKUs to UPC) would silently merge unrelated products — false positives in catalog identity poison the compare-sheet for every user.
+- Identity and pack-equivalence are conceptually distinct and shouldn't share the same mechanism. Auto-merging "1 can" with "24-pack" loses the pack-size info we need to render per-can math, and the two SKUs would fight for one `units_per_pack` value.
+- Trigram + admin queue mirrors the receipts pipeline (DECISIONS.md 2026-05-01). One mental model for "machine guesses, human resolves."
+- A `product_equivalents` table was deferred on 2026-05-05 with the reasoning that "the compare-sheet can render the same comparison at display time" via `units_per_pack`. That assumed *one product per pack variant with full UOM data on the product*. It works for "case of 24 → $4.58/can" within one store, but it does NOT bridge the cross-store case where Massy sells the single SKU and PriceSmart sells the case SKU. Reopening the equivalence table is the cleanest path.
+- Conservative auto-link threshold: false positives are asymmetrically costly compared to false negatives. A wrong cross-store merge surfaces the wrong store's price publicly; a missed merge just means admin has to click one extra time. Tighten over time as confidence grows.
+
+**Sequencing:**
+
+1. Massy + PriceSmart ingest as fragmented catalogs (no auto-link tier yet). Receipt data already routes through trigram matching, so receipt-attributed products do consolidate naturally.
+2. Identity-match milestone: trigram tier + `potential_duplicate` `flagged_items` reason + admin merge UI extending `/queue`.
+3. Pack-variant milestone: `product_equivalents` migration, admin link UI (with trigram suggester), compare-sheet pulls equivalent rows with per-unit math.
+
+**Trade-offs accepted:**
+
+- Until milestone 2, every Massy and PriceSmart product is a separate row from its SuperPharm/admin-seeded equivalent even when they're physically identical. Compare-sheet shows one store per product. This is honest for region-exclusive items and misleading for the universal-brand minority — admin merges close the gap.
+- Tuning the threshold from cold is hard; we accept some flagging churn while real data accumulates.
+- `product_equivalents` introduces a new admin-curated table with no auto-population path. Trigram suggester reduces but does not eliminate the curation cost. Acceptable — equivalents are inherently a small set (case-of-N variants per item) and the compare-sheet payoff is high per linked pair.
+
+---
+
+## 2026-05-09 — LLM triage drains the `potential_duplicate` queue; product_equivalents is directional
+
+**Context:** Migration 0026 added the trigram identity matcher with a `potential_duplicate` queue, plus a runner-side backfill (0027/0028) that flagged ~9.4k pairs across the existing PriceSmart/SuperPharm/Massy catalogs. Two open questions: how to drain that queue at human scale, and how to model pack-variant equivalence (Massy single can vs PriceSmart case-of-24) once the LLM identifies one.
+
+**Decision:**
+- Drain the queue with one NVIDIA NIM call per batch (default 10 pairs/call, runner-overridable, Edge Function clamps at 30) over a new `triage-duplicates` Edge Function. NIM (build.nvidia.com / `integrate.api.nvidia.com`) hosts Meta Llama 3.3 70B Instruct; the API is OpenAI-compatible (`POST /v1/chat/completions`, Bearer auth). The LLM picks one of `same_product` (→ `merge_products` RPC), `pack_variant` (→ insert `product_equivalents`), `different` (→ resolve as `rejected`), or `uncertain` (→ leave for admin). The runner (`admin/scripts/triage-duplicates.mjs`) signs in as an admin user, forwards the JWT, and paces calls at 1600 ms to fit NIM's free-tier 40 RPM (no daily cap) — ~24 minutes wall-clock to drain ~9.4k pairs.
+- `product_equivalents` is **directional**: `(product_id, equivalent_product_id, scale_factor)` with `scale_factor > 1` enforced. Application convention writes "larger pack → smaller unit" (e.g. case-of-24 → single can with `scale_factor = 24`). Reads at compare time UNION the inverse direction so the lookup is bidirectional but the stored fact is single-source.
+- `flagged_items.resolution` gains a fifth value, `pack_variant`, so admins can filter the queue by "what did the LLM decide" and spot-check.
+
+**Reasoning:**
+- Pure-admin drain at 9.4k pairs is impractical. The LLM at temperature 0 with brand + size context handles the high-confidence majority; the residual `uncertain` bucket is what admin actually clicks through. The existing `resolve-flagged-item` Edge Function still owns the human path — the triage function only writes outcomes the model is confident in.
+- `merge_products` (from 0026) is reused for `same_product`. No new merge *path*, but draining the backfill exposed two `flagged_items_ingest_unique` collisions the function hit, fixed in 0030 (post-merge-redundant unresolved flags) and 0031 (the symmetric `(E,F)` / `(F,E)` case): both now pre-resolve would-be-duplicate unresolved flags as `merged` (with a system note) before the repoint UPDATEs, and the index only enforces on unresolved rows. Direction is fixed by the matcher's framing — the *flagged* product is the just-inserted/later one and gets collapsed into the *candidate* (older), preserving accumulated history on the surviving row.
+- Directional `product_equivalents` over symmetric: a symmetric model (storing both `(A, B, 24)` and `(B, A, 1/24)`) introduces the risk of asymmetric drift if one side is updated and the other isn't. Storing one canonical direction with `scale_factor > 1` and UNION-ing at read time keeps the table small, the constraint enforceable, and the data invariant uncomplicated.
+- Provider chain: Gemini 2.5 Flash (free tier 5 RPM / 20 RPD) is DOA at this volume; Gemma 4 31B (15 RPM / 1.5K RPD) is workable but tight against the receipts + circulars budget; NVIDIA NIM Llama 3.3 70B (40 RPM, no daily cap, OpenAI-compatible, 70B-class) clears the volume with margin. Structured output is enforced by `response_format: {type: 'json_object'}` plus a worked-example prompt — NIM silently ignored `nvext.guided_json` on this endpoint, so `extractJson` stays as a defensive parser for the rare fence-wrapped reply.
+- Conservative LLM defaults: temperature 0, explicit "prefer uncertain over guessing" in the prompt, `[triage_llm]` prefix on resolution notes so admin can filter or audit any subset of the LLM's calls. False positives in catalog identity are asymmetrically costly (they show wrong prices to users); false negatives just leave a flag in the queue.
+- Volume math: 9,443 pairs / 10 per call ≈ 945 calls. At 1600 ms pace (40 RPM = 1500 ms + 100 ms safety) that's ~25 minutes; no daily cap so `MAX_CALLS=5000` is a runaway guardrail, not a quota.
+
+**Trade-offs accepted:**
+- **New function secret:** `triage-duplicates` requires `NVIDIA_API_KEY` set on the Supabase project. This is the first LLM pipeline that does *not* reuse `GOOGLE_AI_API_KEY` (receipts / circulars) — it must be provisioned before deploy or the function returns 500 "NVIDIA_API_KEY is not configured".
+- Free-tier data-use / ToS now follows build.nvidia.com rather than Google. Catalog product names and brands are public info, so this stays a non-issue; the provider change is noted for completeness.
+- LLM mistakes are real. The `[triage_llm]` notes prefix + the new `pack_variant` resolution value let admin spot-audit by filter; correcting an LLM-decided flag means admin re-flags or runs a manual `merge_products` undo. Acceptable cost — at ~9.4k pairs the admin click-through alternative is months of work.
+- One NIM call per Edge Function invocation (not multi-batch streaming). Cold-starts are hot-path overhead, but the runner's `PACE_MS` dominates anyway. Simpler beats faster here.
+- The compare-sheet UI binding for `product_equivalents` (per-unit math row in `PriceComparisonRow`) is deferred to a follow-up so the LLM's output can be validated against admin spot-checks before going live in front of users.
+
+---
+
+## 2026-10-12 — Native iOS development & sideloading on Windows via xtool (WSL2) + GitHub Actions unsigned IPA
+
+**Context:** The primary development machine runs Windows 11 with WSL2 (Ubuntu 24.04). Moving from Expo Go to a custom native iOS build (required by `react-native-vision-camera`) requires compiling the Objective-C/C++ CocoaPods (`ReactCore`, `RNScreens`, `RNReanimated`, `VisionCamera`) against the Apple iOS SDK (`iphoneos`) and then code-signing and installing the resulting `.ipa` onto a physical iPhone without a local Mac.
+
+**Decision:**
+- Split the iOS pipeline into two stages:
+  1. **Compile unsigned `.ipa` on macOS CI:** `.github/workflows/ios-unsigned-ipa.yml` runs `npx expo prebuild --platform ios --clean --no-install`, `pod install`, and `xcodebuild` (`CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO`) on GitHub Actions `macos-15` (or via `eas.json` EAS Build), producing `SmartShopper-unsigned.ipa`.
+  2. **Sign & sideload locally on Windows via `xtool` in WSL2:** Installed `xtool 1.21.0`, `usbmuxd`, `libimobiledevice-utils`, and `socat` in WSL2 Ubuntu (`~/.local/bin/xtool`). Created `.agents/skills/xtool-ios/scripts/connect-iphone-wsl.ps1` (which bridges Windows Apple Mobile Device Service on `127.0.0.1:27015` into WSL2 `/var/run/usbmuxd` via `socat`) and `sideload-ipa.ps1` (one-command Windows helper that checks the USB bridge, verifies `xtool auth status`, and invokes `xtool install` to provision, sign, and deploy the `.ipa` over USB).
+
+**Reasoning:**
+- `xtool` (`xtool-org/xtool`) natively handles Apple Developer Services authentication (free or paid Apple ID), provisioning profiles, entitlements, and `libimobiledevice` installation on Linux/WSL2, eliminating the need for Xcode on a local Mac just to sign and install builds on a physical iPhone.
+- While `xtool` compiles pure SwiftPM apps directly on Linux, React Native's Objective-C/C++ pods require Xcode's `clang`/CocoaPods build system. Offloading only the unsigned compilation step to `macos-15` GitHub Actions keeps signing credentials off CI altogether — Apple ID authentication stays strictly local inside WSL2 (`xtool auth login`).
+- Bridging Windows AMDS (`127.0.0.1:27015`) into WSL2 `/var/run/usbmuxd` via `socat` avoids kernel-level USB driver conflicts (`usbipd`) while letting Windows and WSL2 share the connected iPhone simultaneously.
+
+**Trade-offs accepted:**
+- Rebuilding native pods (when adding a new native module) requires a ~8–10 minute GitHub Actions run to produce a new `SmartShopper-unsigned.ipa`. Day-to-day JS/TS edits still hot-reload instantly over Metro once the native client is installed on the iPhone.
+- Free Apple ID provisioning profiles expire every 7 days (standard Apple limitation); re-running `sideload-ipa.ps1` refreshes the signature in seconds.
+
+---
+
+## 2026-10-12 — react-native-vision-camera v4 (built-in useCodeScanner) for F2 Barcode Scanning
+
+**Context:** With the `xtool` native iOS sideloading pipeline in place, we are no longer constrained by Expo Go's native module whitelist. `CLAUDE.md` originally specified `react-native-vision-camera` + `vision-camera-code-scanner` for F2 (Barcode scanning) and F3 (AI vision recognition). Meanwhile, `npm install react-native-vision-camera` without a version constraint now resolves to `v5.x`, which targets React Native `0.85+` and requires `react-native-nitro-modules`.
+
+**Decision:**
+- Pin `react-native-vision-camera@^4.7.3` (the release series built for Expo SDK 54 / React Native `0.81.5`) and configure its Expo config plugin in `mobile/app.json` with `"enableCodeScanner": true`.
+- Use VisionCamera v4's built-in `useCodeScanner` hook (`codeTypes: ['ean-13', 'ean-8', 'upc-a', 'upc-e', 'code-128']`) directly in `mobile/app/(tabs)/scan.tsx` — omitting the deprecated `vision-camera-code-scanner` package (which was for VisionCamera v2/v3 and is superseded by v4's native `AVCaptureMetadataOutput` / ML Kit integration).
+- Pair `<Camera />` with `useProductByBarcode(barcode)` (`mobile/hooks/useProductByBarcode.ts`), which normalizes UPC-A / EAN-13 leading-zero variants, queries `products` in Supabase first, and falls back to `fetchOffProduct` (Open Food Facts v2 API, extended with `product_name` and `brands`) when a scanned barcode is not yet in our local store catalog.
+
+**Reasoning:**
+- `react-native-vision-camera@4.7.3` ships an official Expo config plugin (`app.plugin.js`) compatible with Expo SDK 54 (`newArchEnabled: true`) without requiring Nitro Modules (`react-native-nitro-modules`) or upgrading React Native beyond `0.81.5`.
+- Built-in `useCodeScanner` runs at hardware speed on iOS (`AVCaptureMetadataOutput`) and Android (ML Kit Barcode Scanning) with zero third-party frame-processor glue code, while keeping VisionCamera's `<Camera />` pipeline ready for F3 (product photo capture / AI vision mode).
+- Including an inline manual UPC drawer (`Type UPC`) and a header shortcut to `/receipt/upload` (`Scan Receipt`) ensures the Scan tab never dead-ends on damaged barcodes or simulator runs where `useCameraDevice('back')` returns `undefined`.
+
+**Trade-offs accepted:**
+- Opening the Scan tab inside stock Expo Go is no longer supported (`react-native-vision-camera` requires the custom native client sideloaded via `xtool` or built via `npx expo run:ios` / `run:android`). This matches the planned transition in `CLAUDE.md`.
+
+---
+
+## 2026-10-12 — Cross-store pack-variant pricing in mobile via directional product_equivalents
+
+**Context:** Migration `0029_product_equivalents.sql` introduced directional pack-variant links (`product_id` = larger pack, `equivalent_product_id` = smaller unit, `scale_factor > 1`), and both the `triage-duplicates` LLM pipeline and the new Admin Queue / Product Detail editors now populate `product_equivalents`. Previously, mobile price comparison (`usePricesForProduct`, `useListItemPrices`, `useListPricesAllStores`) only queried `current_prices` for the single `product_id`, leaving warehouse-club multipacks (PriceSmart) disconnected from single-unit SKUs (Massy / SuperPharm).
+
+**Decision:**
+- Extend `usePricesForProduct`, `useListItemPrices`, and `useListPricesAllStores` to query `product_equivalents` in both directions:
+  - Outbound (`product_id = id`, where the viewed product is the larger pack): scaled equivalent price = `Math.round(shelfAmount * scale_factor)`.
+  - Inbound (`equivalent_product_id = id`, where the viewed product is the smaller unit): scaled equivalent price = `Math.round(shelfAmount / scale_factor)`.
+- Apply **direct-price-first precedence** per store: if a store carries the exact viewed product directly, its direct price always wins; only stores lacking a direct price receive a scaled equivalent price (picking the lowest scaled price if multiple equivalents exist at that store).
+- Surface provenance on `PriceComparisonRow`: render a `N× pack equiv.` / `N× single equiv.` pill, a conversion breakdown subtitle (`Pack variant: [Name] (shelf TT$X.XX ÷ N)`), an `equiv.` label beneath the scaled price, and tap-through navigation to `/product/${otherProductId}`.
+
+**Reasoning:**
+- Direct-price-first precedence prevents a scaled multipack estimate from overshadowing an actual single-unit shelf price when a store sells both sizes.
+- Surfacing both the scaled comparable price AND the actual shelf price (`shelf TT$X.XX ÷ N`) on `PriceComparisonRow` avoids surprising the shopper at the register (you can't buy 1/24th of a case at PriceSmart, even though the per-unit equivalent is cheaper).
+- Sharing the same bidirectional scaling rule in `useListItemPrices` and `useListPricesAllStores` makes the Grocery List's "Compare Stores" sheet compare basket totals across Massy, PriceSmart, and SuperPharm fairly instead of marking warehouse-club items as "missing."
+
+**Trade-offs accepted:**
+- Two lightweight additional PostgREST queries (`product_equivalents` + `current_prices` for linked IDs) when resolving prices. React Query caches the combined result under the existing `pricesForProduct` / `listItemPrices` / `listPricesAllStores` keys, so scroll performance is unaffected.
+
+---
+
+## 2026-10-12 — Scraper Control Center (/scrape-runs + /api/scrapers) and Node v22 TLS/IPv4 runtime flags
+
+**Context:** All three local vendor scrapers (`superpharm`, `massy`, `pricesmart`) had been dormant for months, required manual multi-step CLI invocation from specific working directories, and failed on Windows 11 + Node v22 with `TypeError: fetch failed` (`UNABLE_TO_VERIFY_LEAF_SIGNATURE` and IPv6 Happy Eyeballs timeouts against retailer/Supabase endpoints).
+
+**Decision:**
+- Create `scrapers/run-vendor.js` as a unified CLI orchestrator (`superpharm | massy | pricesmart | all` with `--mode full | ingest-only | backfill`) that spawns child processes with `__dirname`-anchored paths and injects `--use-system-ca --dns-result-order=ipv4first --no-network-family-autoselection`.
+- Expose a local Admin API route (`admin/app/api/scrapers/route.ts`, gated by `requireAdmin()`) and `ScraperControlPanel.tsx` on `/scrape-runs` so admins can inspect per-vendor freshness badges (`Fresh <24h`, `Stale >24h`, `Outdated >7d`), launch `Full Scrape + Ingest`, `Ingest Cached`, or `Backfill Duplicate Matches` runs from the browser, and tail live stdout/stderr logs while `scrape_runs` rows update in Supabase.
+- Anchor `/scrapers/` at the repo root in `.gitignore` so `admin/app/api/scrapers/route.ts` is tracked in git while `/scrapers/` (scripts + JSON dumps) remains strictly gitignored per the 2026-05-07 policy.
+
+**Reasoning:**
+- Node v22 on Windows defaults to its bundled Mozilla CA store (ignoring Windows Root/Intermediate CAs) and attempts dual-stack IPv6/IPv4 Happy Eyeballs connections that time out on certain ISP/retailer paths. Passing `--use-system-ca --dns-result-order=ipv4first --no-network-family-autoselection` in `scrapers/run-vendor.js`, `admin/package.json`, and `admin/app/api/scrapers/route.ts` fixes outbound `fetch()` deterministically without weakening TLS verification (`NODE_TLS_REJECT_UNAUTHORIZED=0` is never used).
+- Giving the admin panel a first-class Scraper Control Center bridges the gap between local dev-machine operation and future VPS cron automation, while still writing every run's audit trail to `public.scrape_runs`.
+
+**Trade-offs accepted:**
+- Spawning `scrapers/run-vendor.js` from `/api/scrapers` works when the Next.js admin panel runs on the host that has the `scrapers/` directory (local dev machine or a self-hosted VPS); on serverless Vercel, `/api/scrapers` detects the missing `scrapers/run-vendor.js` binary and disables local spawn buttons while still displaying `scrape_runs` telemetry from Supabase.
+
+---
+
 ## Template for future entries
 
 ```markdown
@@ -550,3 +719,4 @@ A separate `product_equivalents` table (formally linking "case of 24" to "single
 
 **Trade-offs accepted:** What we're giving up.
 ```
+

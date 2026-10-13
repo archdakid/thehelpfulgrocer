@@ -28,6 +28,8 @@ The core list experience. Must be exceptional even in isolation.
 
 ### F2. Barcode scanning
 
+> **Shipped (2026-10-12):** `mobile/app/(tabs)/scan.tsx` built with `react-native-vision-camera@^4.7.3` (`<Camera />`, `useCameraDevice('back')`, `useCameraPermission`, `useCodeScanner` for `ean-13`, `ean-8`, `upc-a`, `upc-e`, `code-128`). Paired with `useProductByBarcode` (UPC-A / EAN-13 leading-zero normalization → Supabase `products` lookup → Open Food Facts v2 API fallback), corner-bracket framing reticle, torch toggle, inline manual UPC entry drawer (`Type UPC`), and a header shortcut to `/receipt/upload` (`Scan Receipt`).
+
 **User stories:**
 - As a user, I can scan a barcode by opening the scanner from the tab bar
 - As a user, scanning a known product immediately shows me its price comparison
@@ -56,6 +58,8 @@ The core list experience. Must be exceptional even in isolation.
 - Original + rembg-processed images both stored
 
 ### F4. Price comparison popup
+
+> **Shipped & Extended (2026-10-12):** Delivered across `/product/[id]` (`PriceComparisonRow`) and the Grocery List `CompareStoresSheet`. Includes sale badges (`regular_amount_minor_units`, `promo_label`), per-unit UOM math (`$/100g`, `$/100ml`, `each` breakdown for multipacks), out-of-stock indicators, and bidirectional `product_equivalents` scaling (`N× pack equiv.` / `N× single equiv.` with direct-price-first precedence and tap-through navigation to linked pack variants).
 
 The killer feature. Has to feel magical.
 
@@ -119,7 +123,12 @@ The killer feature. Has to feel magical.
 
 ### F8. Admin panel — basic
 
-> **Phase 1 shipped (2026-05-02):** `flagged_items` review queue at `admin/` (Next.js 15 + `@supabase/ssr`) — list with reason filters, per-item detail with receipt-image preview, four resolution actions (`confirm` / `correct` / `reject` / `merge`) routed through the `resolve-flagged-item` Edge Function. Phases 2+ (stores CRUD, circulars, image candidates, bulk actions) are still ahead.
+> **Phases 1–2e shipped (2026-05-02 through 2026-10-12):** Full admin suite at `admin/` (Next.js 15 + `@supabase/ssr`):
+> - `/queue` & `/queue/[id]`: `flagged_items` review queue with bulk actions, inline edits, `pack_variant` resolution (`product_equivalents`), in-browser LLM duplicate triage batch runner (`TriageDuplicatesPanel`), and `[triage_llm]` audit filters.
+> - `/stores` & `/stores/[id]/locations`: Store & branch CRUD with cascade delete preview.
+> - `/circulars`, `/circulars/new`, & `/circulars/[id]`: Weekly circular upload + Gemini 2.5 Flash vision parsing + per-row review.
+> - `/products`, `/products/[id]`, & `/products/images`: 12-category filter, full UOM/pack details editor, `product_equivalents` CRUD (`EquivalentsSection`), per-store price/stock editor, and Open Food Facts image candidate gallery.
+> - `/scrape-runs`: Scraper Control Center (`ScraperControlPanel` + `/api/scrapers`) with per-vendor freshness status cards, one-click scrape/ingest/backfill triggers, and live log tailing.
 
 The minimum admin needs to keep the app running.
 

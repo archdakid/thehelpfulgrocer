@@ -1,0 +1,100 @@
+name: Build Unsigned iOS IPA (for xtool Sideloading)
+
+on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Xcode Build Configuration (Release embeds JS bundle; Debug requires Metro)'
+        required: true
+        default: 'Release'
+        type: choice
+        options:
+          - Release
+          - Debug
+  push:
+    branches:
+      - feature/scraper-ingest-foundation
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/ios-unsigned-ipa.yml'
+
+jobs:
+  build-unsigned-ipa:
+    name: Build Unsigned iOS .ipa on macOS
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm install --legacy-peer-deps
+
+      - name: Configure public Supabase environment variables
+        working-directory: mobile
+        env:
+          SECRET_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          SECRET_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          SUPABASE_URL="${SECRET_SUPABASE_URL:-https://wfjaphybjzjyfdkaomvi.supabase.co}"
+          SUPABASE_ANON_KEY="${SECRET_SUPABASE_ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndmamFwaHlianpqeWZka2FvbXZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1NzI0MjEsImV4cCI6MjA5MzE0ODQyMX0.BnJPFdhPMwLH7j6d5UVB6qa9mr9TO19SZYwC7QGbHxM}"
+          echo "EXPO_PUBLIC_SUPABASE_URL=${SUPABASE_URL}" > .env
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}" >> .env
+
+      - name: Run Expo Prebuild (generate ios/ project)
+        working-directory: mobile
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Install CocoaPods
+        working-directory: mobile/ios
+        run: pod install
+
+      - name: Build Unsigned iOS .app via xcodebuild
+        working-directory: mobile/ios
+        run: |
+          CONFIG="${{ inputs.configuration || 'Release' }}"
+          WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
+          SCHEME="${WORKSPACE%.xcworkspace}"
+          echo "Building workspace=${WORKSPACE} scheme=${SCHEME} config=${CONFIG}"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIG" \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Package Payload into SmartShopper-unsigned.ipa
+        working-directory: mobile/ios
+        run: |
+          APP_PATH=$(find build/Build/Products -name "*.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: Could not find built .app bundle"
+            exit 1
+          fi
+          echo "Found app bundle at: $APP_PATH"
+          mkdir -p ipa_stage/Payload
+          cp -R "$APP_PATH" ipa_stage/Payload/
+          cd ipa_stage
+          zip -qry ../SmartShopper-unsigned.ipa Payload
+          ls -lh ../SmartShopper-unsigned.ipa
+
+      - name: Upload Unsigned IPA Artifact for xtool
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartShopper-unsigned-ipa
+          path: mobile/ios/SmartShopper-unsigned.ipa
+          retention-days: 14

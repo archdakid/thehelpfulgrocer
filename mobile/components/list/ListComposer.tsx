@@ -1,11 +1,12 @@
 import { Plus, Search } from 'lucide-react-native';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View } from 'react-native';
 
 import Input from '@/components/ui/Input';
 import { useSearchProducts } from '@/hooks/useSearchProducts';
 import type { Product } from '@/hooks/useProduct';
 import { useThemedColors } from '@/lib/themedColors';
+import { useUIStore } from '@/stores/useUIStore';
 
 const DEBOUNCE_MS = 250;
 const MIN_QUERY_LENGTH = 2;
@@ -37,7 +38,14 @@ const ListComposer = forwardRef<ListComposerHandle, ListComposerProps>(function 
     focus: () => inputRef.current?.focus(),
   }));
 
-  const search = useSearchProducts(debounced);
+  // Cheapest mode (no active store) restricts results to products that
+  // exist at ≥2 stores — there's no value in showing a single-store
+  // product when the user is comparing across the universe of stores.
+  // When a specific store is active, the user is browsing that store's
+  // catalog and the unfiltered query is the right behavior.
+  const activeStoreId = useUIStore((s) => s.activeStoreId);
+  const requireMultiStore = activeStoreId === null;
+  const search = useSearchProducts(debounced, { requireMultiStore });
   const showResults = debounced.length >= MIN_QUERY_LENGTH;
   const results = search.data ?? [];
 
@@ -89,6 +97,12 @@ const ListComposer = forwardRef<ListComposerHandle, ListComposerProps>(function 
       </View>
 
       {showResults ? (
+        // Cap the results panel so a long match list doesn't push the
+        // To-buy / In-cart sections off-screen, and so the list itself
+        // is scrollable. FlatList's virtualization handles the long tail
+        // efficiently on iPhone SE-class devices. The "Add as custom"
+        // footer sits OUTSIDE the FlatList so it's always visible at the
+        // bottom of the panel even when scrolling through results.
         <View className="mx-4 mb-3 bg-surface rounded-lg border-[0.5px] border-border overflow-hidden">
           {search.isFetching ? (
             <View className="flex-row items-center px-4 py-3">
@@ -97,30 +111,39 @@ const ListComposer = forwardRef<ListComposerHandle, ListComposerProps>(function 
             </View>
           ) : results.length === 0 ? (
             <View className="px-4 py-3">
-              <Text className="text-body-sm text-secondary">No matching products.</Text>
+              <Text className="text-body-sm text-secondary">
+                {requireMultiStore
+                  ? 'No matches with prices at multiple stores.'
+                  : 'No matching products.'}
+              </Text>
             </View>
           ) : (
-            results.map((product) => (
-              <Pressable
-                key={product.id}
-                onPress={() => handlePickProduct(product)}
-                accessibilityRole="button"
-                accessibilityLabel={`Add ${product.name} to list`}
-                className="flex-row items-center px-4 py-3 border-b-[0.5px] border-border"
-              >
-                <Search size={16} color={c.text.tertiary} />
-                <View className="flex-1 ml-3">
-                  <Text className="text-body text-primary" numberOfLines={1}>
-                    {product.name}
-                  </Text>
-                  {product.brand ? (
-                    <Text className="text-body-sm text-secondary" numberOfLines={1}>
-                      {product.brand}
+            <FlatList
+              data={results}
+              keyExtractor={(p) => p.id}
+              keyboardShouldPersistTaps="handled"
+              style={{ maxHeight: 320 }}
+              renderItem={({ item: product }) => (
+                <Pressable
+                  onPress={() => handlePickProduct(product)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add ${product.name} to list`}
+                  className="flex-row items-center px-4 py-3 border-b-[0.5px] border-border"
+                >
+                  <Search size={16} color={c.text.tertiary} />
+                  <View className="flex-1 ml-3">
+                    <Text className="text-body text-primary" numberOfLines={1}>
+                      {product.name}
                     </Text>
-                  ) : null}
-                </View>
-              </Pressable>
-            ))
+                    {product.brand ? (
+                      <Text className="text-body-sm text-secondary" numberOfLines={1}>
+                        {product.brand}
+                      </Text>
+                    ) : null}
+                  </View>
+                </Pressable>
+              )}
+            />
           )}
           <Pressable
             onPress={handleAddCustom}

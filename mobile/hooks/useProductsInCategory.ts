@@ -42,9 +42,29 @@ type RawJoinedRow = {
   }> | null;
 };
 
-export function useProductsInCategory(categoryId: string, storeId: string | null) {
+type Options = {
+  // Filter to products with prices at ≥2 distinct stores. When `storeId`
+  // is also set, additionally requires that the active store is one of
+  // them — i.e. "available here AND elsewhere", which is the contract
+  // the Browse "All Stores" toggle wants in front of a chosen store.
+  // Cheapest mode (storeId null) collapses to the simpler ≥2-store rule.
+  requireMultiStore?: boolean;
+};
+
+export function useProductsInCategory(
+  categoryId: string,
+  storeId: string | null,
+  opts: Options = {},
+) {
+  // Default: when no store is picked, the only meaningful view is
+  // multi-store (Cheapest mode). When a store is set, the caller decides
+  // explicitly via opts.requireMultiStore.
+  const requireMultiStore = opts.requireMultiStore ?? storeId === null;
   return useQuery({
-    queryKey: queryKeys.productsInCategory(categoryId, storeId),
+    queryKey: [
+      ...queryKeys.productsInCategory(categoryId, storeId),
+      requireMultiStore ? 'multi' : 'any',
+    ] as const,
     enabled: isCategoryId(categoryId),
     staleTime: 1000 * 60,
     queryFn: async (): Promise<CategoryProductRow[]> => {
@@ -62,6 +82,7 @@ export function useProductsInCategory(categoryId: string, storeId: string | null
 
         let cheapest: CategoryPriceAtStore | null = null;
         let here: CategoryPriceAtStore | null = null;
+        const storesSeen = new Set<string>();
 
         for (const price of product.current_prices ?? []) {
           if (
@@ -70,6 +91,7 @@ export function useProductsInCategory(categoryId: string, storeId: string | null
             !price.store_id ||
             !price.stores
           ) continue;
+          storesSeen.add(price.store_id);
           const candidate: CategoryPriceAtStore = {
             amountMinorUnits: price.amount_minor_units,
             currency: price.currency,
@@ -82,6 +104,18 @@ export function useProductsInCategory(categoryId: string, storeId: string | null
           if (storeId && price.store_id === storeId) {
             here = candidate;
           }
+        }
+
+        // Multi-store filter:
+        //   - Always require ≥2 distinct stores.
+        //   - When a specific store is set (Browse "All Stores" toggle in
+        //     front of an active store), additionally require the product
+        //     is at that store. "Available here AND elsewhere."
+        // When the caller passes opts.requireMultiStore=false explicitly,
+        // skip the filter entirely.
+        if (requireMultiStore) {
+          if (storesSeen.size < 2) continue;
+          if (storeId && !here) continue;
         }
 
         if (!storeId && cheapest) {

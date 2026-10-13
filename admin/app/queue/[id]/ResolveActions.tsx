@@ -3,6 +3,10 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 
+import {
+  PRODUCT_CATEGORIES,
+  type ProductCategory,
+} from '@/app/products/categories';
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { resolveFlaggedItem, type ResolveEdits } from './actions';
 
@@ -20,21 +24,6 @@ type Props = {
   currency: string;
   resolved: boolean;
 };
-
-// Mirrors migration 0004's CHECK constraint and the manage-product /
-// resolve-flagged-item allow-lists. Kept inline because Resolve is the
-// only consumer of the dropdown in this file.
-const PRODUCT_CATEGORIES = [
-  'produce',
-  'dairy',
-  'meat',
-  'bakery',
-  'pantry',
-  'frozen',
-  'beverage',
-  'snacks',
-] as const;
-type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
 
 function asCategory(raw: string | null): ProductCategory | '' {
   if (!raw) return '';

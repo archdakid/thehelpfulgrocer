@@ -38,12 +38,19 @@ function extractErrorMessage(error: unknown): string {
 }
 
 export default function CategoryDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, multi } = useLocalSearchParams<{ id: string; multi?: string }>();
   const router = useRouter();
   const activeStoreId = useUIStore((s) => s.activeStoreId);
   const items = useListStore((s) => s.items);
   const addProductItem = useListStore((s) => s.addProductItem);
-  const productsQuery = useProductsInCategory(id, activeStoreId);
+  // Two paths into this screen:
+  //   - From Browse "All Stores" mode: ?multi=1 → multi-store filter
+  //     applied regardless of activeStoreId. Shows products at the
+  //     active store AND elsewhere.
+  //   - Without the flag (e.g. deep-link, future paths): defaults to
+  //     "filter when no active store" — same as Cheapest mode behavior.
+  const requireMultiStore = multi === '1' || activeStoreId === null;
+  const productsQuery = useProductsInCategory(id, activeStoreId, { requireMultiStore });
   const { data: stores } = useStores();
   const [sort, setSort] = useState<SortKey>('name-asc');
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
@@ -299,5 +306,6 @@ function handleAdd(
     name: row.name,
     brand: row.brand,
     category: isCategoryIdHelper(row.category) ? row.category : null,
+    imageUrl: row.imageUrl,
   });
 }

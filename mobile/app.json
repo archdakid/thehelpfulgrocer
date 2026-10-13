@@ -33,6 +33,13 @@
     "plugins": [
       "expo-router",
       [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "$(PRODUCT_NAME) uses your camera to scan product barcodes and identify grocery items.",
+          "enableCodeScanner": true
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "SmartShopper needs access to your photos so you can upload receipts.",
