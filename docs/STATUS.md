@@ -3,11 +3,48 @@
 > Single source of truth for what's done, what's in progress, and what's next.
 > Updated at the end of every session. Read this first when restarting.
 
-Last updated: **2026-05-08** (end of Session 20 — F11 Phase 2 per-store vendor categories: schema, ingest hook, mobile Browse "By store" toggle).
+Last updated: **2026-10-12** (Mobile Scan Tab `F2` with `react-native-vision-camera@4.7.3` `useCodeScanner`, `product_equivalents` wired into Mobile Price Comparison & Grocery List Totals, iOS Unsigned `.ipa` CI Workflow + `xtool` Windows Sideloader `sideload-ipa.ps1`, Admin Panel Finalization, and Live Scraper Reactivation across SuperPharm, Massy, & PriceSmart).
 
 ---
 
 ## Done
+
+### Mobile Scan Tab (`F2`), Pack-Variant Price Comparison, & `xtool` iOS Sideloading Pipeline (2026-10-12)
+- [x] **iOS Unsigned `.ipa` Build Workflow & One-Command `xtool` Sideloader**:
+  - Created `.github/workflows/ios-unsigned-ipa.yml` (`workflow_dispatch` on `macos-15`) that runs `npx expo prebuild --platform ios --clean --no-install`, `pod install`, builds `SmartShopper.app` with `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO`, packages `Payload/SmartShopper.app` into `SmartShopper-unsigned.ipa`, and uploads it as artifact `SmartShopper-unsigned-ipa`.
+  - Created `mobile/eas.json` (`development`, `preview`, `production` build profiles).
+  - Created `.agents/skills/xtool-ios/scripts/sideload-ipa.ps1`: one-command Windows PowerShell helper that starts the AMDS (`127.0.0.1:27015`) → WSL2 `/var/run/usbmuxd` bridge, verifies the connected iPhone UDID (`idevice_id -l`), checks `xtool auth status` (prompting `xtool auth login` if needed), and invokes `/home/chadj/.local/bin/xtool install` to sign and deploy the `.ipa`.
+- [x] **Mobile `product_equivalents` Cross-Store Price Comparison (`F4` / `F9`)**:
+  - Extended `mobile/hooks/usePricesForProduct.ts` to query `product_equivalents` in both directions (`product_id = id` where scaled price = `shelf * scale_factor`, and `equivalent_product_id = id` where scaled price = `shelf / scale_factor`), applying direct-price-first precedence per store and attaching `equivalentVariant: EquivalentVariantInfo | null`.
+  - Extended `mobile/components/product/PriceComparisonRow.tsx` to render a `N× pack equiv.` / `N× single equiv.` pill, conversion summary (`Pack variant: [Name] (shelf TT$X.XX ÷ N)`), `equiv.` label beneath the scaled price, and tap-through navigation to `/product/${otherProductId}`.
+  - Extended `mobile/hooks/useListItemPrices.ts` and `mobile/hooks/useListPricesAllStores.ts` so Grocery List item pricing and the `CompareStoresSheet` store-totals reducer include scaled equivalent prices when a store only stocks a linked pack size.
+- [x] **Mobile Scan Tab (`F2` Barcode Scanning via `react-native-vision-camera`)**:
+  - Installed `react-native-vision-camera@^4.7.3` (configured with `"enableCodeScanner": true` in `mobile/app.json`) and built `mobile/app/(tabs)/scan.tsx` using `<Camera />`, `useCameraDevice('back')`, `useCameraPermission()`, and `useCodeScanner` (`ean-13`, `ean-8`, `upc-a`, `upc-e`, `code-128`).
+  - Created `mobile/hooks/useProductByBarcode.ts` (and `queryKeys.productByBarcode` in `mobile/lib/queryKeys.ts`) with UPC-A / EAN-13 leading-zero normalization, primary lookup against Supabase `products`, and automatic fallback to `fetchOffProduct` (`mobile/lib/openFoodFacts.ts`, extended with `productName` and `brand`).
+  - Added corner-bracket reticle, torch toggle, inline manual UPC entry drawer (`Type UPC`), header shortcut to `/receipt/upload` (`Scan Receipt`), and interactive result sheet (`Compare Store Prices` + `Add to Grocery List`).
+
+### Admin Panel Finalization & Live Scraper Reactivation + Control Center (2026-10-12)
+- [x] **Category Synchronization (Migration 0032)**: Updated `admin/app/products/categories.ts`, `admin/app/products/page.tsx` (added category filter dropdown), and `admin/app/queue/[id]/ResolveActions.tsx` with all 12 categories (`produce`, `dairy`, `meat`, `bakery`, `frozen`, `pantry`, `beverage`, `snacks`, `household`, `personal_care`, `pharmacy`, `baby`).
+- [x] **Pack-Variant Resolution & Equivalents Editor**:
+  - Extended `supabase/functions/resolve-flagged-item/index.ts` and `admin/app/queue/[id]/PotentialDuplicateActions.tsx` with `action: 'pack_variant'` (`largerIs`, `scaleFactor`, optional `notes`), writing `product_equivalents` (`source = 'admin'`) and resolving the flag as `pack_variant`.
+  - Extended `supabase/functions/manage-product/index.ts`, `admin/app/products/[id]/DetailsEditor.tsx`, and new `admin/app/products/[id]/EquivalentsSection.tsx` so admins can edit `unit_size`, `unit_of_measure`, `units_per_pack`, `is_sold_by_weight`, `description`, and link/unlink `product_equivalents` directly on `/products/[id]`.
+- [x] **LLM Duplicate Triage UI & Audit View on `/queue`**:
+  - Added `runTriageDuplicatesBatch` server action (`admin/app/queue/actions.ts`) and `TriageDuplicatesPanel.tsx` on `/queue` for running single or auto-paced (40 RPM) `triage-duplicates` batches with live counters (`merged`, `pack_variants`, `rejected`, `uncertain`, `remaining`).
+  - Added status tabs (`Unresolved`, `LLM Triaged ([triage_llm])`, `All Resolved`) and resolution filters (`merged`, `pack_variant`, `rejected`, `confirmed`, `corrected`) on `/queue` for auditing LLM and manual resolutions.
+  - Verified live LLM triage (`admin/scripts/triage-duplicates.mjs`): 30 pairs processed across 3 batches (`4 merged`, `2 pack_variants`, `7 rejected`, `17 uncertain`, `0 errors`).
+- [x] **Scraper Control Center on `/scrape-runs` & Live Vendor Verification**:
+  - Created `scrapers/run-vendor.js` unified CLI runner (`superpharm | massy | pricesmart | all` with `--mode full | ingest-only | backfill`) and patched scraper scripts with `__dirname`-safe paths and Windows Node v22 TLS/DNS flags (`--use-system-ca --dns-result-order=ipv4first --no-network-family-autoselection`).
+  - Created `/api/scrapers` admin route (`admin/app/api/scrapers/route.ts`) and `ScraperControlPanel.tsx` on `/scrape-runs` with per-vendor freshness status cards (`Fresh <24h`, `Stale >24h`, `Outdated >7d`), on-demand trigger buttons (`Full Scrape + Ingest`, `Ingest Cached`, `Backfill Duplicate Matches`), and live log tailing.
+  - Executed and verified live scrape + ingest runs for all 3 vendors:
+    - **SuperPharm**: `runId=a9e0fa8d-c1d9-4078-8498-72b63be7f6ff` (`1,829 prices`, `1,829 availability`, `status=success`)
+    - **Massy Stores**: `runId=f2c5ab58-7750-4f21-9406-034144b42b86` (`7 locations` including newly discovered **Brentwood** `10699` branch, `50,029 prices`, `status=success`)
+    - **PriceSmart**: `runId=358827fc-154a-4ce5-8620-1b331170d63c` (`4 TT clubs`, `9,708 prices`, `status=success`)
+- [x] **`xtool` iOS Native Development on Windows via WSL2**:
+  - Installed `xtool 1.21.0`, `usbmuxd`, `libimobiledevice-utils`, and `socat` in WSL2 Ubuntu 24.04 (`~/.local/bin/xtool`).
+  - Created workspace skill `.agents/skills/xtool-ios/SKILL.md` + helper scripts `wsl-setup-xtool.sh` and `connect-iphone-wsl.ps1` (bridging Windows Apple Mobile Device Service `127.0.0.1:27015` into WSL2 `/var/run/usbmuxd`).
+- [x] **Mobile Root Error Boundary**: Exported `ErrorBoundary` from `expo-router` in `mobile/app/_layout.tsx`.
+
+
 
 ### Foundation
 - [x] Expo SDK 54 project, TypeScript strict, NativeWind v4
@@ -144,20 +181,23 @@ Last updated: **2026-05-08** (end of Session 20 — F11 Phase 2 per-store vendor
 
 ### Features (per `docs/FEATURES.md`)
 - [x] **F1 — Grocery list** (local-only, AsyncStorage persistence, swipe-delete, qty stepper, sectioned)
-- [x] **F4 — Price comparison popup** (delivered as both product detail and the compare-stores sheet)
+- [x] **F2 — Barcode scanning** (`react-native-vision-camera@4.7.3` `useCodeScanner` on `/scan`, UPC-A/EAN-13 normalized lookup in Supabase `products` with Open Food Facts fallback, manual UPC entry, torch toggle, and `/receipt/upload` shortcut)
+- [x] **F4 — Price comparison popup** (delivered as both product detail and the compare-stores sheet, including bidirectional `product_equivalents` pack-variant scaling)
 - [x] **F5 — Store selection** (pill picker on List, persisted active store)
-- [x] **F9 — Cross-store browsing** (active-store filter on list rows, savings callout, compare sheet)
+- [x] **F6 — Receipt scanning** (Phases 1–3: capture/upload, Gemini 2.5 Flash OCR, `pg_trgm` matching + price contribution + `flagged_items` queue)
+- [x] **F7 — Nutritional facts panel** (`NutritionPanel` on `/product/[id]` backed by Open Food Facts v2 API)
+- [x] **F8 — Admin panel** (Phases 1–2e: `flagged_items` queue + LLM duplicate triage runner & audit view, Stores + Locations CRUD, Circular ingest pipeline, Product UOM/pack/equivalents CRUD, Image candidates queue, and Scraper Control Center on `/scrape-runs`)
+- [x] **F9 — Cross-store browsing** (active-store filter on list rows, savings callout, compare sheet with `product_equivalents` support)
 
 ---
 
 ## In progress / explicit stubs in code
 
-These are working code paths but stub behavior — they render, they don't do the full thing yet.
+These are working code paths or partially deferred capabilities:
 
-- **Receipts tab** — Phases 1–3 shipped: upload, OCR, matching, price contribution, and admin queue. Items above 0.50 trigram similarity contribute `source='receipt'` rows to `prices`; below that they sit in the `flagged_items` queue. Unmatched-but-sane items auto-create products and still get queued.
-- **Admin panel F8 Phase 2** — Closed. Stores CRUD (18a), circular ingest (18b), flagged-item edits (18c), product CRUD + bulk queue + per-store prices/availability (18d), and product-image candidate review (18d) all shipped on `feature/admin-phase2-circulars`. `GOOGLE_AI_API_KEY` is already set as a function secret from the receipts pipeline — no new secret needed.
-- **Scraper ingest F11 Phase 2** — Schema and ingest function shipped on `feature/scraper-ingest-foundation`. The runner (out-of-repo per the 2026-05-07 DECISIONS entry) is the missing piece: per-vendor fetch + normalize that POSTs the unified row shape to `ingest-scrape`. Daily delta + weekly full catalog cadence per the 2026-05-05 entry. Three vendor scrapers (PriceSmart, SuperPharm, Massy) exist locally; deploying any of them requires a persistent VPS or dev-machine cron — not GitHub Actions.
-- **Scan tab** — stub. Real camera flow needs a dev build (per `CLAUDE.md` gotcha).
+- **Native iOS Device Deployment (`xtool`)** — WSL2 toolchain (`xtool 1.21.0`, `usbmuxd`, `libimobiledevice-utils`, `socat`), `.github/workflows/ios-unsigned-ipa.yml`, and `.agents/skills/xtool-ios/scripts/sideload-ipa.ps1` are ready. Next step is triggering the unsigned `.ipa` workflow and sideloading onto the physical iPhone.
+- **Scan tab (`F2` shipped / `F3` pending)** — `F2` (Barcode scanning via `react-native-vision-camera` `useCodeScanner` + manual UPC entry + Receipt OCR shortcut) is complete. `F3` (AI vision mode for non-barcoded produce/bakery items + `rembg` candidate capture) is the next camera enhancement.
+- **Scraper ingest (`F11` Phase 2)** — All three vendor scrapers (SuperPharm, Massy, PriceSmart) have been reactivated, verified live against production Supabase (`61,566` price observations ingested on 2026-10-12), and wired into the Admin Scraper Control Center (`/scrape-runs`). Remaining step for 24/7 autonomy is scheduling `node scrapers/run-vendor.js all --mode full` via OS Task Scheduler / VPS cron.
 - **Auth email confirmation** — sign-up surfaces a "check your email" message; the actual confirmation/redirect flow is whatever Supabase has configured for the project (no deep-link handler in the app yet).
 - **Browse "Often Bought" chips** — visual only; tap is a no-op TODO. Will wire when receipt history exists.
 - **Save TT$X callout in running-total card** — works in at-store mode; hidden in Cheapest mode (correct).
@@ -168,12 +208,12 @@ These are working code paths but stub behavior — they render, they don't do th
 
 Roughly in order of likely impact:
 
-1. **Scraper runner deployment** — picks a vendor (PriceSmart / SuperPharm / Massy), runs on a persistent VPS, posts to `ingest-scrape`. Schema, function, audit table, AND per-store categories pipeline are in. Until the runner is deployed, prices and vendor categories stay receipt + admin-driven (which means: no vendor categories at all, since receipt/admin paths don't write to `product_store_categories`).
-2. **`supabase gen types typescript --linked > mobile/types/database.ts`** — bring the typed client up to date with migrations 0019–0025 so the `/stores/[id]/locations`, `/scrape-runs`, and the new mobile vendor-category hooks can drop their temporary casts. Hygiene before the next admin / mobile change touches `store_location_id`, `scrape_runs.categories_writes`, `product_store_categories`, etc.
-3. **Compare-sheet UI for shipped scrape data** — sale / promo label, out-of-stock indicator, $/100ml + $/100g UOM normalization, "case of N = $X each" pack-size breakdown, per-location stock summary. All schema is in (0021/0022/0023); UI hasn't been wired.
-4. **Camera scanning (F2/F3)** — needs a custom dev build (`react-native-vision-camera` + `vision-camera-code-scanner`). Out-of-scope until then.
+1. **First Physical iPhone Sideload & On-Device Camera Verification** — Run `.github/workflows/ios-unsigned-ipa.yml` (or `eas build`), download `SmartShopper-unsigned.ipa`, and run `sideload-ipa.ps1` to test `react-native-vision-camera` barcode scanning on physical hardware.
+2. **Drain Remaining `potential_duplicate` Queue & Schedule Autonomous Scrapers** — Use the `/queue` LLM Duplicate Triage batch runner (or `node admin/scripts/triage-duplicates.mjs`) to finish draining the remaining flagged duplicate pairs, and register a scheduled task / cron job for `node scrapers/run-vendor.js all --mode full`.
+3. **AI Vision Product Recognition (`F3`) & User Wrong-Price Reporting (`F4`)** — Add vision capture mode to `mobile/app/(tabs)/scan.tsx` for loose produce/bakery items, and wire a "Report wrong price" action on `/product/[id]`.
+4. **GPS Store Detection (`F5`)** — Wire foreground Haversine distance check against `store_locations` (`lat`, `lng`) to suggest the nearest store pill in `StorePicker`.
 5. **Auth deep-link handler** — for Supabase email confirmation; deferred until closer to launch. Workaround for dev: disable email confirmation in the Supabase dashboard.
-6. **Remaining polish** — "Often Bought" chips on Browse (blocked on receipt history), category filter chips (blocked on subcategory schema).
+6. **Remaining polish** — "Often Bought" chips on Browse (backed by receipt history).
 
 ---
 
@@ -190,11 +230,15 @@ Shipped decisions that constrain future work:
 - Supabase over Firebase
 - Expo over bare RN
 - `prices` is append-only; `current_prices` view surfaces latest
-- Anonymous receipt scanning allowed
+- Receipts require sign-in (RLS-scoped private storage bucket)
 - Admin-curated store list (no user submissions)
 - Image source priority: OFF → admin-approved → admin-uploaded → placeholder
 - Tailwind v3 pinned (NativeWind v4 incompatible with Tailwind v4)
 - `--legacy-peer-deps` for `react-dom` transitive conflict
+- `xtool` (WSL2) + GitHub Actions unsigned `.ipa` for Windows → iPhone native sideloading
+- `react-native-vision-camera@^4.7.3` with built-in `useCodeScanner` for `F2` barcode scanning
+- Bidirectional `product_equivalents` scaling with direct-price-first precedence in mobile comparison & list totals
+- Unified `scrapers/run-vendor.js` + `/scrape-runs` Admin Control Center with Node v22 TLS/IPv4 flags
 
 ---
 

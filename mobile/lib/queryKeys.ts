@@ -5,6 +5,7 @@ export const queryKeys = {
   stores: () => ['stores'] as const,
   products: (filters: { search?: string } = {}) => ['products', filters] as const,
   product: (id: string) => ['products', id] as const,
+  productByBarcode: (upc: string) => ['products', 'barcode', upc] as const,
   searchProducts: (query: string, requireMultiStore: boolean = false) =>
     ['products', 'search', query, requireMultiStore ? 'multi' : 'any'] as const,
   productsByCategory: () => ['products', 'category-counts'] as const,

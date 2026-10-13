@@ -10,7 +10,7 @@
 // the moment for an Edge Function.
 
 const OFF_BASE = 'https://world.openfoodfacts.org/api/v2';
-const FIELDS = ['product_name', 'image_url', 'nutriments'].join(',');
+const FIELDS = ['product_name', 'brands', 'image_url', 'nutriments'].join(',');
 const USER_AGENT = 'SmartShopper/0.1 (https://smartshopper.app)';
 
 export type OFFNutrition = {
@@ -23,6 +23,8 @@ export type OFFNutrition = {
 };
 
 export type OFFProduct = {
+  productName: string | null;
+  brand: string | null;
   imageUrl: string | null;
   nutrition: OFFNutrition | null;
 };
@@ -39,6 +41,8 @@ type RawNutriments = {
 type RawResponse = {
   status?: number;
   product?: {
+    product_name?: string | null;
+    brands?: string | null;
     image_url?: string | null;
     nutriments?: RawNutriments;
   };
@@ -76,6 +80,8 @@ export async function fetchOffProduct(barcode: string): Promise<OFFProduct | nul
   const hasAny = candidate && Object.values(candidate).some((v) => v !== null);
 
   return {
+    productName: data.product.product_name?.trim() || null,
+    brand: data.product.brands?.split(',')[0]?.trim() || null,
     imageUrl: data.product.image_url ?? null,
     nutrition: hasAny ? candidate : null,
   };

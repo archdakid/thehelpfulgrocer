@@ -108,11 +108,16 @@ export default async function QueueDetailPage({ params }: Props) {
         <PotentialDuplicateActions
           flaggedItemId={flag.id}
           flaggedProductId={flag.flagged_product_id}
+          flaggedProductName={
+            (flag.flagged_product as { name?: string } | null)?.name ?? null
+          }
           candidateProductId={flag.candidate_product_id}
           candidateProductName={
             (flag.candidate_product as { name?: string } | null)?.name ?? null
           }
           resolved={Boolean(flag.resolved_at)}
+          resolution={flag.resolution}
+          initialNotes={flag.notes}
         />
       </div>
     );

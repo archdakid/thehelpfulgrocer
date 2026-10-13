@@ -628,6 +628,84 @@ The matching problem splits into two:
 
 ---
 
+## 2026-10-12 — Native iOS development & sideloading on Windows via xtool (WSL2) + GitHub Actions unsigned IPA
+
+**Context:** The primary development machine runs Windows 11 with WSL2 (Ubuntu 24.04). Moving from Expo Go to a custom native iOS build (required by `react-native-vision-camera`) requires compiling the Objective-C/C++ CocoaPods (`ReactCore`, `RNScreens`, `RNReanimated`, `VisionCamera`) against the Apple iOS SDK (`iphoneos`) and then code-signing and installing the resulting `.ipa` onto a physical iPhone without a local Mac.
+
+**Decision:**
+- Split the iOS pipeline into two stages:
+  1. **Compile unsigned `.ipa` on macOS CI:** `.github/workflows/ios-unsigned-ipa.yml` runs `npx expo prebuild --platform ios --clean --no-install`, `pod install`, and `xcodebuild` (`CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO`) on GitHub Actions `macos-15` (or via `eas.json` EAS Build), producing `SmartShopper-unsigned.ipa`.
+  2. **Sign & sideload locally on Windows via `xtool` in WSL2:** Installed `xtool 1.21.0`, `usbmuxd`, `libimobiledevice-utils`, and `socat` in WSL2 Ubuntu (`~/.local/bin/xtool`). Created `.agents/skills/xtool-ios/scripts/connect-iphone-wsl.ps1` (which bridges Windows Apple Mobile Device Service on `127.0.0.1:27015` into WSL2 `/var/run/usbmuxd` via `socat`) and `sideload-ipa.ps1` (one-command Windows helper that checks the USB bridge, verifies `xtool auth status`, and invokes `xtool install` to provision, sign, and deploy the `.ipa` over USB).
+
+**Reasoning:**
+- `xtool` (`xtool-org/xtool`) natively handles Apple Developer Services authentication (free or paid Apple ID), provisioning profiles, entitlements, and `libimobiledevice` installation on Linux/WSL2, eliminating the need for Xcode on a local Mac just to sign and install builds on a physical iPhone.
+- While `xtool` compiles pure SwiftPM apps directly on Linux, React Native's Objective-C/C++ pods require Xcode's `clang`/CocoaPods build system. Offloading only the unsigned compilation step to `macos-15` GitHub Actions keeps signing credentials off CI altogether — Apple ID authentication stays strictly local inside WSL2 (`xtool auth login`).
+- Bridging Windows AMDS (`127.0.0.1:27015`) into WSL2 `/var/run/usbmuxd` via `socat` avoids kernel-level USB driver conflicts (`usbipd`) while letting Windows and WSL2 share the connected iPhone simultaneously.
+
+**Trade-offs accepted:**
+- Rebuilding native pods (when adding a new native module) requires a ~8–10 minute GitHub Actions run to produce a new `SmartShopper-unsigned.ipa`. Day-to-day JS/TS edits still hot-reload instantly over Metro once the native client is installed on the iPhone.
+- Free Apple ID provisioning profiles expire every 7 days (standard Apple limitation); re-running `sideload-ipa.ps1` refreshes the signature in seconds.
+
+---
+
+## 2026-10-12 — react-native-vision-camera v4 (built-in useCodeScanner) for F2 Barcode Scanning
+
+**Context:** With the `xtool` native iOS sideloading pipeline in place, we are no longer constrained by Expo Go's native module whitelist. `CLAUDE.md` originally specified `react-native-vision-camera` + `vision-camera-code-scanner` for F2 (Barcode scanning) and F3 (AI vision recognition). Meanwhile, `npm install react-native-vision-camera` without a version constraint now resolves to `v5.x`, which targets React Native `0.85+` and requires `react-native-nitro-modules`.
+
+**Decision:**
+- Pin `react-native-vision-camera@^4.7.3` (the release series built for Expo SDK 54 / React Native `0.81.5`) and configure its Expo config plugin in `mobile/app.json` with `"enableCodeScanner": true`.
+- Use VisionCamera v4's built-in `useCodeScanner` hook (`codeTypes: ['ean-13', 'ean-8', 'upc-a', 'upc-e', 'code-128']`) directly in `mobile/app/(tabs)/scan.tsx` — omitting the deprecated `vision-camera-code-scanner` package (which was for VisionCamera v2/v3 and is superseded by v4's native `AVCaptureMetadataOutput` / ML Kit integration).
+- Pair `<Camera />` with `useProductByBarcode(barcode)` (`mobile/hooks/useProductByBarcode.ts`), which normalizes UPC-A / EAN-13 leading-zero variants, queries `products` in Supabase first, and falls back to `fetchOffProduct` (Open Food Facts v2 API, extended with `product_name` and `brands`) when a scanned barcode is not yet in our local store catalog.
+
+**Reasoning:**
+- `react-native-vision-camera@4.7.3` ships an official Expo config plugin (`app.plugin.js`) compatible with Expo SDK 54 (`newArchEnabled: true`) without requiring Nitro Modules (`react-native-nitro-modules`) or upgrading React Native beyond `0.81.5`.
+- Built-in `useCodeScanner` runs at hardware speed on iOS (`AVCaptureMetadataOutput`) and Android (ML Kit Barcode Scanning) with zero third-party frame-processor glue code, while keeping VisionCamera's `<Camera />` pipeline ready for F3 (product photo capture / AI vision mode).
+- Including an inline manual UPC drawer (`Type UPC`) and a header shortcut to `/receipt/upload` (`Scan Receipt`) ensures the Scan tab never dead-ends on damaged barcodes or simulator runs where `useCameraDevice('back')` returns `undefined`.
+
+**Trade-offs accepted:**
+- Opening the Scan tab inside stock Expo Go is no longer supported (`react-native-vision-camera` requires the custom native client sideloaded via `xtool` or built via `npx expo run:ios` / `run:android`). This matches the planned transition in `CLAUDE.md`.
+
+---
+
+## 2026-10-12 — Cross-store pack-variant pricing in mobile via directional product_equivalents
+
+**Context:** Migration `0029_product_equivalents.sql` introduced directional pack-variant links (`product_id` = larger pack, `equivalent_product_id` = smaller unit, `scale_factor > 1`), and both the `triage-duplicates` LLM pipeline and the new Admin Queue / Product Detail editors now populate `product_equivalents`. Previously, mobile price comparison (`usePricesForProduct`, `useListItemPrices`, `useListPricesAllStores`) only queried `current_prices` for the single `product_id`, leaving warehouse-club multipacks (PriceSmart) disconnected from single-unit SKUs (Massy / SuperPharm).
+
+**Decision:**
+- Extend `usePricesForProduct`, `useListItemPrices`, and `useListPricesAllStores` to query `product_equivalents` in both directions:
+  - Outbound (`product_id = id`, where the viewed product is the larger pack): scaled equivalent price = `Math.round(shelfAmount * scale_factor)`.
+  - Inbound (`equivalent_product_id = id`, where the viewed product is the smaller unit): scaled equivalent price = `Math.round(shelfAmount / scale_factor)`.
+- Apply **direct-price-first precedence** per store: if a store carries the exact viewed product directly, its direct price always wins; only stores lacking a direct price receive a scaled equivalent price (picking the lowest scaled price if multiple equivalents exist at that store).
+- Surface provenance on `PriceComparisonRow`: render a `N× pack equiv.` / `N× single equiv.` pill, a conversion breakdown subtitle (`Pack variant: [Name] (shelf TT$X.XX ÷ N)`), an `equiv.` label beneath the scaled price, and tap-through navigation to `/product/${otherProductId}`.
+
+**Reasoning:**
+- Direct-price-first precedence prevents a scaled multipack estimate from overshadowing an actual single-unit shelf price when a store sells both sizes.
+- Surfacing both the scaled comparable price AND the actual shelf price (`shelf TT$X.XX ÷ N`) on `PriceComparisonRow` avoids surprising the shopper at the register (you can't buy 1/24th of a case at PriceSmart, even though the per-unit equivalent is cheaper).
+- Sharing the same bidirectional scaling rule in `useListItemPrices` and `useListPricesAllStores` makes the Grocery List's "Compare Stores" sheet compare basket totals across Massy, PriceSmart, and SuperPharm fairly instead of marking warehouse-club items as "missing."
+
+**Trade-offs accepted:**
+- Two lightweight additional PostgREST queries (`product_equivalents` + `current_prices` for linked IDs) when resolving prices. React Query caches the combined result under the existing `pricesForProduct` / `listItemPrices` / `listPricesAllStores` keys, so scroll performance is unaffected.
+
+---
+
+## 2026-10-12 — Scraper Control Center (/scrape-runs + /api/scrapers) and Node v22 TLS/IPv4 runtime flags
+
+**Context:** All three local vendor scrapers (`superpharm`, `massy`, `pricesmart`) had been dormant for months, required manual multi-step CLI invocation from specific working directories, and failed on Windows 11 + Node v22 with `TypeError: fetch failed` (`UNABLE_TO_VERIFY_LEAF_SIGNATURE` and IPv6 Happy Eyeballs timeouts against retailer/Supabase endpoints).
+
+**Decision:**
+- Create `scrapers/run-vendor.js` as a unified CLI orchestrator (`superpharm | massy | pricesmart | all` with `--mode full | ingest-only | backfill`) that spawns child processes with `__dirname`-anchored paths and injects `--use-system-ca --dns-result-order=ipv4first --no-network-family-autoselection`.
+- Expose a local Admin API route (`admin/app/api/scrapers/route.ts`, gated by `requireAdmin()`) and `ScraperControlPanel.tsx` on `/scrape-runs` so admins can inspect per-vendor freshness badges (`Fresh <24h`, `Stale >24h`, `Outdated >7d`), launch `Full Scrape + Ingest`, `Ingest Cached`, or `Backfill Duplicate Matches` runs from the browser, and tail live stdout/stderr logs while `scrape_runs` rows update in Supabase.
+- Anchor `/scrapers/` at the repo root in `.gitignore` so `admin/app/api/scrapers/route.ts` is tracked in git while `/scrapers/` (scripts + JSON dumps) remains strictly gitignored per the 2026-05-07 policy.
+
+**Reasoning:**
+- Node v22 on Windows defaults to its bundled Mozilla CA store (ignoring Windows Root/Intermediate CAs) and attempts dual-stack IPv6/IPv4 Happy Eyeballs connections that time out on certain ISP/retailer paths. Passing `--use-system-ca --dns-result-order=ipv4first --no-network-family-autoselection` in `scrapers/run-vendor.js`, `admin/package.json`, and `admin/app/api/scrapers/route.ts` fixes outbound `fetch()` deterministically without weakening TLS verification (`NODE_TLS_REJECT_UNAUTHORIZED=0` is never used).
+- Giving the admin panel a first-class Scraper Control Center bridges the gap between local dev-machine operation and future VPS cron automation, while still writing every run's audit trail to `public.scrape_runs`.
+
+**Trade-offs accepted:**
+- Spawning `scrapers/run-vendor.js` from `/api/scrapers` works when the Next.js admin panel runs on the host that has the `scrapers/` directory (local dev machine or a self-hosted VPS); on serverless Vercel, `/api/scrapers` detects the missing `scrapers/run-vendor.js` binary and disables local spawn buttons while still displaying `scrape_runs` telemetry from Supabase.
+
+---
+
 ## Template for future entries
 
 ```markdown
@@ -641,3 +719,4 @@ The matching problem splits into two:
 
 **Trade-offs accepted:** What we're giving up.
 ```
+

@@ -35,11 +35,14 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '
 const NVIDIA_API_KEY = Deno.env.get('NVIDIA_API_KEY') ?? '';
 
 const NIM_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-// Meta Llama 3.3 70B Instruct hosted on NVIDIA NIM. Strong on
-// instruction-following + JSON output, well within the 70B-class capability
-// the triage task benefits from. Free tier on build.nvidia.com is 40 RPM,
-// no per-token billing, no daily cap.
-const NIM_MODEL = 'meta/llama-3.3-70b-instruct';
+// Active models hosted on NVIDIA NIM (meta/llama-3.3-70b-instruct was
+// retired on 2026-08-26 with HTTP 410 Gone). Ordered by latency & JSON
+// reliability; callNIM falls back down the list on 404/410/429/5xx.
+const NIM_MODELS = [
+  'nvidia/nemotron-3-super-120b-a12b',
+  'openai/gpt-oss-20b',
+  'google/gemma-4-31b-it',
+];
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -238,44 +241,49 @@ async function callNIM(flags: FlagRow[]): Promise<{ verdicts: Verdict[]; rawSamp
     '{"verdicts":[{"pair_index":0,"decision":"same_product","reason":"Both are Heinz Ketchup 397g.","larger_is":null,"scale_factor":null},{"pair_index":1,"decision":"pack_variant","reason":"Single can vs case-of-24 of Coke 330ml.","larger_is":2,"scale_factor":24}]}',
   ].join('\n');
 
-  const res = await fetch(NIM_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${NVIDIA_API_KEY}`,
-      Accept: 'application/json',
-    },
-    body: JSON.stringify({
-      model: NIM_MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        {
-          role: 'user',
-          content: `Pairs to evaluate:\n${JSON.stringify({ pairs }, null, 2)}`,
-        },
-      ],
-      // Deterministic for reproducible spot-checks.
-      temperature: 0,
-      // ~10 verdicts × ~80 tokens each ≈ 800 tokens. Buffer to 4096 so
-      // unusually verbose `reason` fields don't get cut off.
-      max_tokens: 4096,
-      // OpenAI-standard JSON mode. NIM's `nvext.guided_json` was silently
-      // ignored in initial testing (model returned markdown prose), so we
-      // fall back to the OpenAI knob Llama-on-NIM is documented to honor.
-      // Combined with the explicit JSON-shape example in the prompt, this
-      // reliably produces parseable output. extractJson handles the rare
-      // residual fence wrapping.
-      response_format: { type: 'json_object' },
-    }),
-  });
+  let text: string | undefined;
+  let lastError = 'NIM returned no text';
 
-  if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`NIM ${res.status}: ${errBody.slice(0, 500)}`);
+  for (const model of NIM_MODELS) {
+    const res = await fetch(NIM_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${NVIDIA_API_KEY}`,
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          {
+            role: 'user',
+            content: `Pairs to evaluate:\n${JSON.stringify({ pairs }, null, 2)}`,
+          },
+        ],
+        temperature: 0,
+        max_tokens: 4096,
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      lastError = `NIM ${res.status} (${model}): ${errBody.slice(0, 500)}`;
+      console.warn(lastError);
+      continue;
+    }
+
+    const payload = await res.json();
+    const candidateText: string | undefined = payload?.choices?.[0]?.message?.content;
+    if (candidateText && candidateText.trim().length > 0) {
+      text = candidateText;
+      break;
+    }
+    lastError = `NIM returned empty content (${model})`;
   }
-  const payload = await res.json();
-  const text: string | undefined = payload?.choices?.[0]?.message?.content;
-  if (!text) throw new Error('NIM returned no text');
+
+  if (!text) throw new Error(lastError);
 
   // guided_json guarantees structure, but defensive parse + extract for
   // the rare case the schema is rejected and the server falls back to

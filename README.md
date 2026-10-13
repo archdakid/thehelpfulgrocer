@@ -94,10 +94,15 @@ Then:
 - Press `a` to open Android emulator
 - Or scan the QR code with Expo Go on your phone
 
-For features that need native modules beyond Expo Go (camera, vision):
+For features that need native modules beyond Expo Go (`react-native-vision-camera` barcode scanning):
 ```bash
-npx expo run:ios       # builds a custom iOS dev client
+npx expo run:ios       # builds a custom iOS dev client (macOS)
 npx expo run:android   # builds a custom Android dev client
+```
+
+On **Windows 11 + WSL2**, build `SmartShopper-unsigned.ipa` via `.github/workflows/ios-unsigned-ipa.yml` (or `eas build`) and sideload directly onto a physical USB-connected iPhone using `xtool`:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\xtool-ios\scripts\sideload-ipa.ps1 -IpaPath .\SmartShopper-unsigned.ipa
 ```
 
 ### Admin panel
@@ -106,6 +111,15 @@ npx expo run:android   # builds a custom Android dev client
 cd admin
 npm run dev
 # → http://localhost:3000
+```
+
+### Scrapers (local runner)
+
+```bash
+node scrapers/run-vendor.js superpharm --mode full
+node scrapers/run-vendor.js massy --mode full
+node scrapers/run-vendor.js pricesmart --mode full
+node scrapers/run-vendor.js all --mode full
 ```
 
 ### Supabase (local)
@@ -142,6 +156,7 @@ For Claude Code sessions, see `CLAUDE.md` at the root.
 | [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) | Colors, typography, components, motion |
 | [`docs/CODING_STANDARDS.md`](docs/CODING_STANDARDS.md) | TS rules, naming, patterns, anti-patterns |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Why we chose X over Y (append-only) |
+| [`docs/STATUS.md`](docs/STATUS.md) | Current session status, completed features, and open MVP gaps |
 
 ---
 
@@ -151,8 +166,9 @@ For Claude Code sessions, see `CLAUDE.md` at the root.
 |---|---|---|
 | Supabase | 500MB DB, 50K MAU, 1GB storage | Postgres, Auth, Storage, Edge Functions |
 | Open Food Facts | Free, no auth | Product UPC lookup + nutritional data |
-| Anthropic Claude API | Pay-as-you-go (low usage) | Parsing weekly circulars (admin batch) |
-| Expo EAS | 30 builds/mo | iOS + Android dev/prod builds |
+| Google Gemini 2.5 Flash | 15 RPM / 1.5K RPD free tier | Receipt OCR (`process-receipt`) & weekly circular parsing (`parse-circular`) |
+| NVIDIA NIM (Llama 3.3 70B) | 40 RPM free tier | Cross-store duplicate & pack-variant triage (`triage-duplicates`) |
+| `xtool` / Expo EAS | Local WSL2 / 30 builds/mo | Native iOS signing & sideloading on Windows + cloud builds |
 | Vercel | Free tier | Admin panel hosting |
 | Sentry | 5K errors/mo | Crash and error tracking |
 
@@ -164,7 +180,7 @@ For Claude Code sessions, see `CLAUDE.md` at the root.
 Run: `supabase gen types typescript --linked > mobile/types/database.ts`
 
 ### Camera doesn't work in Expo Go
-Expected — `react-native-vision-camera` requires a custom dev client. Run `npx expo run:ios` or `npx expo run:android`.
+Expected — `react-native-vision-camera` requires a custom dev client. Run `sideload-ipa.ps1` (on Windows via `xtool`) or `npx expo run:ios` / `npx expo run:android`.
 
 ### Supabase RLS errors when querying tables
 Test as both anonymous and authenticated. Each table has explicit RLS policies — see `docs/DATA_MODEL.md`.

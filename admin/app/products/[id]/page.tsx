@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import DeleteSection from './DeleteSection';
 import DetailsEditor from './DetailsEditor';
+import EquivalentsSection, { type EquivalentRow } from './EquivalentsSection';
 import ImageEditor from './ImageEditor';
 import PricesSection from './PricesSection';
 
@@ -17,7 +18,9 @@ export default async function ProductDetailPage({ params }: Props) {
 
   const { data, error } = await supabase
     .from('products')
-    .select('id, name, brand, upc, image_url, category, created_at')
+    .select(
+      'id, name, brand, upc, image_url, category, unit_size, unit_of_measure, units_per_pack, is_sold_by_weight, description, created_at',
+    )
     .eq('id', id)
     .maybeSingle();
 
@@ -31,23 +34,46 @@ export default async function ProductDetailPage({ params }: Props) {
 
   if (!data) notFound();
 
-  // Pull stores + current prices + availability in parallel. current_prices
-  // is a view of the latest observation per (product, store).
-  const [storesRes, pricesRes, availabilityRes] = await Promise.all([
-    supabase
-      .from('stores')
-      .select('id, name, region')
-      .eq('is_active', true)
-      .order('name'),
-    supabase
-      .from('current_prices')
-      .select('store_id, amount_minor_units, currency, source, observed_at')
-      .eq('product_id', id),
-    supabase
-      .from('product_store_availability')
-      .select('store_id, is_available, updated_at')
-      .eq('product_id', id),
-  ]);
+  // Pull stores + current prices + availability + equivalents in parallel.
+  const [storesRes, pricesRes, availabilityRes, eqLargerRes, eqSmallerRes] =
+    await Promise.all([
+      supabase
+        .from('stores')
+        .select('id, name, region')
+        .eq('is_active', true)
+        .order('name'),
+      supabase
+        .from('current_prices')
+        .select('store_id, amount_minor_units, currency, source, observed_at')
+        .eq('product_id', id),
+      supabase
+        .from('product_store_availability')
+        .select('store_id, is_available, updated_at')
+        .eq('product_id', id),
+      supabase
+        .from('product_equivalents')
+        .select(
+          `id, product_id, equivalent_product_id, scale_factor, source, notes,
+           other_product:products!product_equivalents_equivalent_product_id_fkey (
+             id, name, brand, unit_size, unit_of_measure, units_per_pack
+           )`,
+        )
+        .eq('product_id', id),
+      supabase
+        .from('product_equivalents')
+        .select(
+          `id, product_id, equivalent_product_id, scale_factor, source, notes,
+           other_product:products!product_equivalents_product_id_fkey (
+             id, name, brand, unit_size, unit_of_measure, units_per_pack
+           )`,
+        )
+        .eq('equivalent_product_id', id),
+    ]);
+
+  const equivalents: EquivalentRow[] = [
+    ...((eqLargerRes.data ?? []) as unknown as EquivalentRow[]),
+    ...((eqSmallerRes.data ?? []) as unknown as EquivalentRow[]),
+  ];
 
   return (
     <div className="space-y-5">
@@ -65,7 +91,18 @@ export default async function ProductDetailPage({ params }: Props) {
           brand: data.brand,
           upc: data.upc,
           category: data.category,
+          unit_size: data.unit_size,
+          unit_of_measure: data.unit_of_measure,
+          units_per_pack: data.units_per_pack,
+          is_sold_by_weight: data.is_sold_by_weight,
+          description: data.description,
         }}
+      />
+
+      <EquivalentsSection
+        productId={data.id}
+        productName={data.name}
+        equivalents={equivalents}
       />
 
       <ImageEditor
@@ -87,13 +124,15 @@ export default async function ProductDetailPage({ params }: Props) {
           p.currency &&
           p.source &&
           p.observed_at
-            ? [{
-                store_id: p.store_id,
-                amount_minor_units: p.amount_minor_units,
-                currency: p.currency,
-                source: p.source,
-                observed_at: p.observed_at,
-              }]
+            ? [
+                {
+                  store_id: p.store_id,
+                  amount_minor_units: p.amount_minor_units,
+                  currency: p.currency,
+                  source: p.source,
+                  observed_at: p.observed_at,
+                },
+              ]
             : [],
         )}
         availability={availabilityRes.data ?? []}

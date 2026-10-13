@@ -7,11 +7,18 @@ import type { ProductCategory } from './categories';
 
 type Result = { ok: true; imageUrl: string | null } | { ok: false; error: string };
 
+export type UnitOfMeasure = 'each' | 'g' | 'kg' | 'ml' | 'L' | 'oz' | 'lb';
+
 export type ProductFields = {
   name?: string;
   brand?: string | null;
   upc?: string | null;
   category?: ProductCategory | null;
+  unit_size?: number | null;
+  unit_of_measure?: UnitOfMeasure | null;
+  units_per_pack?: number | null;
+  is_sold_by_weight?: boolean;
+  description?: string | null;
 };
 
 type CreateResult =
@@ -281,3 +288,70 @@ export async function skipProductImage(
   revalidatePath('/products/images');
   return { ok: true };
 }
+
+// =============================================================================
+// Pack / Size Equivalents (manage-product Edge Function)
+// =============================================================================
+
+export type EquivalentSearchCandidate = {
+  id: string;
+  name: string;
+  brand: string | null;
+  unit_size: number | null;
+  unit_of_measure: string | null;
+  units_per_pack: number | null;
+};
+
+export async function searchProductsForEquivalent(
+  query: string,
+  excludeProductId: string,
+): Promise<{ ok: true; products: EquivalentSearchCandidate[] } | { ok: false; error: string }> {
+  const q = query.trim();
+  if (q.length < 2) return { ok: true, products: [] };
+  const supabase = await createSupabaseServerClient();
+  const safe = q.replace(/[%_,]/g, ' ');
+  const { data, error } = await supabase
+    .from('products')
+    .select('id, name, brand, unit_size, unit_of_measure, units_per_pack')
+    .neq('id', excludeProductId)
+    .or(`name.ilike.%${safe}%,brand.ilike.%${safe}%,upc.ilike.%${safe}%`)
+    .order('name')
+    .limit(12);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, products: data ?? [] };
+}
+
+export async function upsertProductEquivalent(input: {
+  currentProductId: string;
+  largerProductId: string;
+  smallerProductId: string;
+  scaleFactor: number;
+  notes?: string | null;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await invokeManageProduct<Record<string, unknown>>({
+    action: 'upsert_equivalent',
+    largerProductId: input.largerProductId,
+    smallerProductId: input.smallerProductId,
+    scaleFactor: input.scaleFactor,
+    notes: input.notes ?? null,
+  });
+  if ('error' in res) return { ok: false, error: res.error };
+  revalidatePath(`/products/${input.currentProductId}`);
+  revalidatePath(`/products/${input.largerProductId}`);
+  revalidatePath(`/products/${input.smallerProductId}`);
+  return { ok: true };
+}
+
+export async function deleteProductEquivalent(input: {
+  equivalentId: string;
+  currentProductId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await invokeManageProduct<Record<string, unknown>>({
+    action: 'delete_equivalent',
+    equivalentId: input.equivalentId,
+  });
+  if ('error' in res) return { ok: false, error: res.error };
+  revalidatePath(`/products/${input.currentProductId}`);
+  return { ok: true };
+}
+

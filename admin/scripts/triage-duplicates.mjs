@@ -37,14 +37,16 @@
 //                    is purely a guardrail, not a quota concern.)
 
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 
-// Inline .env loader. Looks for .env.local then .env in CWD. Explicit
-// process.env wins so a one-off `BATCH_SIZE=20 node ...` override still
-// works even when .env.local is present. No dotenv dependency — the parser
-// covers the cases this script needs (KEY=value, # comments, optional
-// surrounding quotes); anything more exotic should be exported by the
-// shell.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const adminDir = resolve(__dirname, '..');
+
+// Inline .env loader. Looks for .env.local then .env in admin/ and CWD.
+loadEnvFile(resolve(adminDir, '.env.local'));
+loadEnvFile(resolve(adminDir, '.env'));
 loadEnvFile('.env.local');
 loadEnvFile('.env');
 

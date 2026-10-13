@@ -34,8 +34,24 @@ type Reason =
   | 'low_confidence'
   | 'auto_created_product'
   | 'potential_duplicate';
-type Action = 'confirm' | 'correct' | 'reject' | 'merge' | 'merge_duplicate';
-type Resolution = 'confirmed' | 'corrected' | 'rejected' | 'merged';
+type Action =
+  | 'confirm'
+  | 'correct'
+  | 'reject'
+  | 'merge'
+  | 'merge_duplicate'
+  | 'pack_variant';
+type Resolution =
+  | 'confirmed'
+  | 'corrected'
+  | 'rejected'
+  | 'merged'
+  | 'pack_variant';
+
+type PackVariantSpec = {
+  largerIs: 'flagged' | 'candidate';
+  scaleFactor: number;
+};
 
 // Optional per-resolve edits the admin can apply alongside the action.
 // `productName`, `brand`, and `category` only apply to
@@ -84,6 +100,7 @@ type Payload = {
   targetProductId?: unknown;
   notes?: unknown;
   edits?: unknown;
+  packVariant?: unknown;
 };
 
 Deno.serve(async (req) => {
@@ -99,11 +116,19 @@ Deno.serve(async (req) => {
       typeof body?.targetProductId === 'string' ? body.targetProductId : null;
     const notes = typeof body?.notes === 'string' ? body.notes : null;
     const edits = parseEdits(body?.edits);
+    const packVariant = parsePackVariant(body?.packVariant);
 
     if (!flaggedItemId) return jsonError(400, 'Missing flaggedItemId');
     if (
       !action ||
-      !['confirm', 'correct', 'reject', 'merge', 'merge_duplicate'].includes(action)
+      ![
+        'confirm',
+        'correct',
+        'reject',
+        'merge',
+        'merge_duplicate',
+        'pack_variant',
+      ].includes(action)
     ) {
       return jsonError(400, 'Invalid action');
     }
@@ -147,6 +172,7 @@ Deno.serve(async (req) => {
       targetProductId,
       notes,
       edits,
+      packVariant,
       resolvedBy: adminId,
     });
     return jsonOk(result);
@@ -163,6 +189,7 @@ type ResolveCtx = {
   targetProductId: string | null;
   notes: string | null;
   edits: Edits;
+  packVariant: PackVariantSpec | null;
   resolvedBy: string;
 };
 
@@ -341,19 +368,22 @@ function validateActionReason(action: Action, reason: Reason) {
     unmatched: ['correct', 'reject'],
     low_confidence: ['confirm', 'correct', 'reject'],
     auto_created_product: ['confirm', 'merge', 'reject'],
-    potential_duplicate: ['merge_duplicate', 'reject'],
+    potential_duplicate: ['merge_duplicate', 'pack_variant', 'reject'],
   };
   if (!allowed[reason].includes(action)) {
     throw new Error(`Action '${action}' not valid for reason '${reason}'`);
   }
 }
 
-// Ingest-origin merge resolver. Two valid actions on potential_duplicate:
+// Ingest-origin merge/equivalence resolver. Three valid actions on potential_duplicate:
 //
 //   - merge_duplicate: collapse flagged_product_id into candidate_product_id
 //     (or admin-picked targetProductId if they prefer a different winner).
 //     Calls the merge_products() Postgres function which moves prices,
 //     aliases, availability, categories atomically and deletes the loser.
+//   - pack_variant: link the two products as a pack variant in
+//     product_equivalents (larger_id -> smaller_id with scale_factor > 1)
+//     and mark resolution = 'pack_variant'.
 //   - reject: admin says "these aren't actually duplicates, keep both."
 //     Just marks the flag resolved.
 //
@@ -392,6 +422,41 @@ async function resolvePotentialDuplicate(
     });
     if (mErr) throw new Error(`Merge failed: ${mErr.message}`);
     resolution = 'merged';
+  } else if (ctx.action === 'pack_variant') {
+    const candidateId =
+      ctx.targetProductId ?? (flag.candidate_product_id as string | null);
+    if (!candidateId) {
+      throw new Error('pack_variant requires candidate_product_id or targetProductId');
+    }
+    if (candidateId === flaggedProductId) {
+      throw new Error('pack_variant: target equals flagged product');
+    }
+    if (!ctx.packVariant) {
+      throw new Error('pack_variant requires packVariant { largerIs, scaleFactor }');
+    }
+    const { largerIs, scaleFactor } = ctx.packVariant;
+    if (!Number.isFinite(scaleFactor) || scaleFactor <= 1) {
+      throw new Error('scaleFactor must be a number > 1');
+    }
+    const largerId = largerIs === 'flagged' ? flaggedProductId : candidateId;
+    const smallerId = largerIs === 'flagged' ? candidateId : flaggedProductId;
+
+    const { error: eqErr } = await (admin.from('product_equivalents') as any)
+      .upsert(
+        {
+          product_id: largerId,
+          equivalent_product_id: smallerId,
+          scale_factor: scaleFactor,
+          source: 'admin',
+          notes: ctx.notes ?? null,
+          created_by: ctx.resolvedBy,
+        },
+        { onConflict: 'product_id,equivalent_product_id' },
+      );
+    if (eqErr) {
+      throw new Error(`Insert product_equivalents failed: ${eqErr.message}`);
+    }
+    resolution = 'pack_variant';
   } else if (ctx.action === 'reject') {
     // "Not actually a duplicate" — keep both products as-is.
     resolution = 'rejected';
@@ -410,6 +475,19 @@ async function resolvePotentialDuplicate(
   if (resErr) throw new Error(`Mark resolved failed: ${resErr.message}`);
 
   return { ok: true, resolution };
+}
+
+function parsePackVariant(value: unknown): PackVariantSpec | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const largerIs =
+    v.largerIs === 'flagged' || v.largerIs === 'candidate' ? v.largerIs : null;
+  const scaleFactor =
+    typeof v.scaleFactor === 'number' && Number.isFinite(v.scaleFactor)
+      ? v.scaleFactor
+      : null;
+  if (!largerIs || scaleFactor === null) return null;
+  return { largerIs, scaleFactor };
 }
 
 async function contributePrice(

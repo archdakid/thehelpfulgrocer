@@ -72,3 +72,58 @@ export async function resolveFlaggedItemsBulk(
   revalidatePath('/queue');
   return { ok: true, succeeded, failed: errors.length, errors };
 }
+
+export type TriageBatchResult = {
+  ok?: boolean;
+  processed: number;
+  merged: number;
+  pack_variants: number;
+  rejected: number;
+  uncertain: number;
+  errors: Array<{ flagged_item_id: string; message: string }>;
+  remaining: number;
+};
+
+export async function runTriageDuplicatesBatch(options?: {
+  batchSize?: number;
+  minScore?: number | null;
+}): Promise<{ ok: true; result: TriageBatchResult } | { ok: false; error: string }> {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.access_token) return { ok: false, error: 'Not signed in' };
+
+  const body: Record<string, unknown> = {
+    batchSize: options?.batchSize ?? 10,
+  };
+  if (options?.minScore != null && Number.isFinite(options.minScore)) {
+    body.minScore = options.minScore;
+  }
+
+  const { data, error } = await supabase.functions.invoke<
+    TriageBatchResult & { error?: string }
+  >('triage-duplicates', {
+    body,
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+
+  if (error) {
+    const ctx = (error as unknown as { context?: Response }).context;
+    if (ctx && typeof ctx.json === 'function') {
+      try {
+        const eb = (await ctx.clone().json()) as { error?: string };
+        if (eb?.error) return { ok: false, error: eb.error };
+      } catch {
+        // fall through
+      }
+    }
+    return { ok: false, error: error.message };
+  }
+  if (!data) return { ok: false, error: 'Empty response from triage-duplicates' };
+  if (data.error) return { ok: false, error: data.error };
+
+  revalidatePath('/queue');
+  return { ok: true, result: data };
+}
+

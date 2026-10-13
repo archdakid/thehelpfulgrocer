@@ -15,6 +15,9 @@ export type QueueRow = {
   id: string;
   reason: 'unmatched' | 'low_confidence' | 'auto_created_product' | 'potential_duplicate';
   match_score: number | null;
+  resolution?: string | null;
+  notes?: string | null;
+  resolved_at?: string | null;
   auto_created_product: { id: string; name: string } | null;
   flagged_product: { id: string; name: string; brand: string | null } | null;
   candidate_product: { id: string; name: string; brand: string | null } | null;
@@ -250,7 +253,13 @@ function ReceiptRow({ row }: { row: QueueRow }) {
           {item?.match_confidence != null
             ? ` · score ${item.match_confidence.toFixed(2)}`
             : ''}
+          {row.resolution ? ` · resolved: ${row.resolution}` : ''}
         </p>
+        {row.notes ? (
+          <p className="text-xs font-mono text-muted mt-0.5 truncate">
+            {row.notes}
+          </p>
+        ) : null}
       </div>
       <div className="text-sm tabular-nums text-text shrink-0 pr-4">
         {formatMoney(item?.line_total_minor_units ?? 0, receipt?.currency ?? 'TTD')}
@@ -268,7 +277,7 @@ function DupRow({ row }: { row: QueueRow }) {
       <p className="text-sm truncate">
         <span className="font-medium">
           {flagged?.brand ? `${flagged.brand} · ` : ''}
-          {flagged?.name ?? '<deleted>'}
+          {flagged?.name ?? '<deleted/merged>'}
         </span>
         <span className="text-muted"> ↔ </span>
         <span className="font-medium">
@@ -278,7 +287,13 @@ function DupRow({ row }: { row: QueueRow }) {
       </p>
       <p className="text-xs text-muted mt-0.5">
         {score != null ? `similarity ${Number(score).toFixed(3)}` : 'no score'}
+        {row.resolution ? ` · resolved: ${row.resolution}` : ''}
       </p>
+      {row.notes ? (
+        <p className="text-xs font-mono text-muted mt-0.5 truncate">
+          {row.notes}
+        </p>
+      ) : null}
     </div>
   );
 }

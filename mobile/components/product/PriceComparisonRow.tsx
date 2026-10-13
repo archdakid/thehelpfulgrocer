@@ -1,4 +1,5 @@
-import { Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Pressable, Text, View } from 'react-native';
 
 import Badge from '@/components/ui/Badge';
 import {
@@ -22,11 +23,13 @@ export default function PriceComparisonRow({
   product,
   isCheapest,
 }: PriceComparisonRowProps) {
+  const router = useRouter();
   const stale = isStalePrice(entry.observedAt);
   const onSale =
     entry.regularAmountMinorUnits != null &&
     entry.regularAmountMinorUnits > entry.amountMinorUnits;
   const muted = !entry.isAvailable;
+  const eq = entry.equivalentVariant;
 
   // Out-of-stock takes precedence over best-price; you can't claim "best" on
   // a row the user can't actually buy. When per-branch data narrows it to
@@ -56,7 +59,13 @@ export default function PriceComparisonRow({
     currency: entry.currency,
   });
 
-  return (
+  const equivalentSummary = eq
+    ? eq.direction === 'larger_pack'
+      ? `Pack variant: ${eq.otherProductName} (shelf ${formatPrice(eq.shelfAmountMinorUnits, entry.currency)} ÷ ${eq.scaleFactor})`
+      : `Pack variant: ${eq.scaleFactor}× ${eq.otherProductName} (${formatPrice(eq.shelfAmountMinorUnits, entry.currency)} ea)`
+    : null;
+
+  const content = (
     <View
       className="flex-row items-center px-4 py-3 bg-surface border-b-[0.5px] border-border min-h-14"
       style={{ opacity: muted ? 0.55 : 1 }}
@@ -66,6 +75,18 @@ export default function PriceComparisonRow({
           <Text className="text-body text-primary" numberOfLines={1} style={{ flexShrink: 1 }}>
             {entry.store.name}
           </Text>
+          {eq ? (
+            <View className="bg-brand-primary/10 rounded-full px-1.5 self-start" style={{ paddingVertical: 1 }}>
+              <Text
+                className="text-caption font-semibold text-brand-primary"
+                numberOfLines={1}
+              >
+                {eq.direction === 'larger_pack'
+                  ? `${eq.scaleFactor}× pack equiv.`
+                  : `${eq.scaleFactor}× single equiv.`}
+              </Text>
+            </View>
+          ) : null}
           {entry.promoLabel ? (
             <View className="bg-brand-accent/20 rounded-full px-1.5 self-start" style={{ paddingVertical: 1 }}>
               <Text
@@ -84,8 +105,15 @@ export default function PriceComparisonRow({
           </Text>
           {badge ? <Badge label={badge.label} variant={badge.variant} /> : null}
         </View>
-        {/* Per-unit and pack-each lines render only when they apply. They're
-            independent — a "case of 24 cans of 330ml" can show both. */}
+        {equivalentSummary ? (
+          <Text
+            className="text-caption text-secondary mt-1"
+            numberOfLines={2}
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
+            {equivalentSummary}
+          </Text>
+        ) : null}
         {perUnit || packEach ? (
           <View className="mt-1" style={{ gap: 1 }}>
             {perUnit ? (
@@ -125,7 +153,29 @@ export default function PriceComparisonRow({
         >
           {formatPrice(entry.amountMinorUnits, entry.currency)}
         </Text>
+        {eq ? (
+          <Text
+            className="text-[11px] text-tertiary"
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
+            equiv.
+          </Text>
+        ) : null}
       </View>
     </View>
   );
+
+  if (eq) {
+    return (
+      <Pressable
+        onPress={() => router.push(`/product/${eq.otherProductId}`)}
+        accessibilityRole="button"
+        accessibilityLabel={`View linked pack variant ${eq.otherProductName}`}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return content;
 }
